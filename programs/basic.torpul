@@ -1,0 +1,27 @@
+function Multiply(left: Integer, right: Integer): Integer
+  return 1
+endfunction
+
+function GreaterThan(bigger: Float256, smaller: Float256): TruthValue
+  return true
+endfunction
+
+function Square(n: Integer): Integer
+  return call Multiply(left=n, right=n)
+endfunction
+
+function ControlFlow(x: TruthValue, y: Integer, z: Integer): Integer
+  return if x then
+    y
+  else
+    z
+  endif
+endfunction
+
+function Complicated(x: Integer, y: Float256): Integer
+  return if call GreaterThan(bigger=y, smaller=50.0f256) then
+    call Square(n=x)
+  else
+    x
+  endif
+endfunction

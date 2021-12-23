@@ -1,0 +1,253 @@
+#ifndef TORPUL_LEXER_H
+#define TORPUL_LEXER_H
+
+#include <cassert>
+#include <iostream>
+#include <string>
+
+namespace torpul {
+
+enum class Token {
+  eof,
+  term_function,
+  term_endfunction,
+  term_return,
+  term_call,
+  term_if,
+  term_then,
+  term_else,
+  term_endif,
+  identifier_string,
+  const_integer_string,
+  const_float64_string,
+  const_float256_string,
+  const_true,
+  const_false,
+  open_paren,
+  close_paren,
+  colon,
+  equals,
+  comma,
+  error_unknown_token,
+  error_invalid_number_format,
+};
+
+std::ostream& operator<<(std::ostream& os, const Token& t) {
+  switch (t) {
+    case Token::eof:
+      os << "eof";
+      return os;
+    case Token::term_function:
+      os << "term_function";
+      return os;
+    case Token::term_endfunction:
+      os << "term_endfunction";
+      return os;
+    case Token::term_return:
+      os << "term_return";
+      return os;
+    case Token::term_call:
+      os << "term_call";
+      return os;
+    case Token::term_if:
+      os << "term_if";
+      return os;
+    case Token::term_then:
+      os << "term_then";
+      return os;
+    case Token::term_else:
+      os << "term_else";
+      return os;
+    case Token::term_endif:
+      os << "term_endif";
+      return os;
+    case Token::identifier_string:
+      os << "identifier_string";
+      return os;
+    case Token::const_integer_string:
+      os << "const_integer_string";
+      return os;
+    case Token::const_float64_string:
+      os << "const_float64_string";
+      return os;
+    case Token::const_float256_string:
+      os << "const_float256_string";
+      return os;
+    case Token::const_true:
+      os << "const_true";
+      return os;
+    case Token::const_false:
+      os << "const_false";
+      return os;
+    case Token::open_paren:
+      os << "open_paren";
+      return os;
+    case Token::close_paren:
+      os << "close_paren";
+      return os;
+    case Token::colon:
+      os << "colon";
+      return os;
+    case Token::equals:
+      os << "equals";
+      return os;
+    case Token::comma:
+      os << "comma";
+      return os;
+    case Token::error_unknown_token:
+      os << "error_unknown_token";
+      return os;
+    case Token::error_invalid_number_format:
+      os << "error_invalid_number_format";
+      return os;
+  }
+}
+
+class Lexer {
+ public:
+  Token read_token() {
+    Token token = read_token_impl();
+    if (mode == Mode::Verbose) {
+      show_read_token(token);
+    }
+    return token;
+  }
+
+  enum class Mode {
+    Quiet,
+    Verbose,
+  };
+
+  static Lexer Create(Mode mode = Mode::Quiet) {
+    return Lexer(mode);
+  }
+
+  std::string get_identifier_content() {
+    assert(current_identifier_content != "");
+    return current_identifier_content;
+  }
+
+  std::string get_number_content() {
+    assert(current_number_content != "");
+    return current_number_content;
+  }
+
+ private:
+  Lexer(Mode mode) : mode(mode) {}
+  std::string current_identifier_content;
+  std::string current_number_content;
+  int last_char = ' ';
+  const Mode mode;
+
+  Token read_token_impl() {
+    current_identifier_content = "";
+    current_number_content = "";
+    while (isspace(last_char)) {
+      last_char = getchar();
+    }
+
+    if (isalpha(last_char)) {
+      std::string identifier;
+      do {
+        identifier += (char)last_char;
+        last_char = getchar();
+      } while (isalnum(last_char));
+      //   std::cerr << "read identifier: " << identifier << std::endl;
+      if (identifier == "function") {
+        return Token::term_function;
+      } else if (identifier == "endfunction") {
+        return Token::term_endfunction;
+      } else if (identifier == "return") {
+        return Token::term_return;
+      } else if (identifier == "call") {
+        return Token::term_call;
+      } else if (identifier == "if") {
+        return Token::term_if;
+      } else if (identifier == "then") {
+        return Token::term_then;
+      } else if (identifier == "else") {
+        return Token::term_else;
+      } else if (identifier == "endif") {
+        return Token::term_endif;
+      } else if (identifier == "true") {
+        return Token::const_true;
+      } else if (identifier == "false") {
+        return Token::const_false;
+      } else {
+        current_identifier_content = identifier;
+        return Token::identifier_string;
+      }
+    } else if (isdigit(last_char)) {
+      std::string number = "";
+      do {
+        number += last_char;
+        last_char = getchar();
+      } while (isdigit(last_char));
+      if (last_char == '.') {
+        do {
+          number += last_char;
+          last_char = getchar();
+        } while (isdigit(last_char));
+        std::string suffix = "";
+        do {
+          suffix += last_char;
+          last_char = getchar();
+        } while (isalnum(last_char));
+        if (suffix == "f64") {
+          current_number_content = number;
+          return Token::const_float64_string;
+        } else if (suffix == "f256") {
+          current_number_content = number;
+          return Token::const_float256_string;
+        } else {
+          std::cerr << "Error: expected f64 or f256 float constant suffix, but got: " << suffix << std::endl;
+          std::cerr << "Valid number constant formats are: 1234 (Integer), 12.34f64 (Float64), 12.34f256 (Float256)" << std::endl;
+          return Token::error_invalid_number_format;
+        }
+      } else {
+        current_number_content = number;
+        return Token::const_integer_string;
+      }
+    } else if (last_char == '(') {
+      last_char = ' ';
+      return Token::open_paren;
+    } else if (last_char == ')') {
+      last_char = ' ';
+      return Token::close_paren;
+    } else if (last_char == ':') {
+      last_char = ' ';
+      return Token::colon;
+    } else if (last_char == '=') {
+      last_char = ' ';
+      return Token::equals;
+    } else if (last_char == ',') {
+      last_char = ' ';
+      return Token::comma;
+    } else if (last_char == EOF) {
+      last_char = ' ';
+      return Token::eof;
+    } else {
+      return Token::error_unknown_token;
+    }
+  }
+
+  void show_read_token(Token token) {
+    switch (token) {
+      case Token::identifier_string:
+        std::cerr << "read identifier: " << get_identifier_content() << std::endl;
+        return;
+      case Token::const_integer_string:
+      case Token::const_float64_string:
+      case Token::const_float256_string:
+        std::cerr << "read number constant: " << get_number_content() << std::endl;
+        return;
+      default:
+        std::cerr << "read token: " << token << std::endl;
+        return;
+    }
+  }
+};
+
+}  // namespace torpul
+
+#endif
