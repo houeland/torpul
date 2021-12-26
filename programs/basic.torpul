@@ -3,7 +3,7 @@ function Multiply(left: Integer, right: Integer): Integer
 endfunction
 
 function GreaterThan(bigger: Float256, smaller: Float256): TruthValue
-  return true
+  return false
 endfunction
 
 function Square(n: Integer): Integer
@@ -24,4 +24,8 @@ function Complicated(x: Integer, y: Float256): Integer
   else
     x
   endif
+endfunction
+
+function Main(): Integer
+  return call Complicated(x=17, y=1.0f256)
 endfunction

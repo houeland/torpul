@@ -1,1 +1,1 @@
-/usr/local/opt/llvm/bin/clang++ `/usr/local/opt/llvm/bin/llvm-config --cxxflags --ldflags --system-libs --libs core` -std=c++20 -Wall -Wextra -pedantic -Wno-unused-parameter -o build/main src/main.cpp && ./build/main < programs/basic.torpul
+/usr/local/opt/llvm/bin/clang++ `/usr/local/opt/llvm/bin/llvm-config --cxxflags --ldflags --system-libs --libs core` -std=c++20 -Wall -Wextra -pedantic -Wno-unused-parameter -o build/main src/main.cpp && ./build/main < programs/basic.torpul && /usr/local/opt/llvm/bin/clang++ src/wrapper.cpp build/output.o -o build/main && ./build/main

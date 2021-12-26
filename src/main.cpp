@@ -21,5 +21,6 @@ int main() {
   llvm::InitializeNativeTargetAsmParser();
 
   torpul::LlvmCodegen codegen = torpul::LlvmCodegen::Create(torpul::LlvmCodegen::Mode::Verbose);
-  codegen.doStuff(*typed_program);
+  // codegen.doStuff(*typed_program);
+  codegen.compileProgram(*typed_program);
 }

@@ -9,6 +9,11 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Host.h"
+#include "llvm/Support/TargetRegistry.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -40,6 +45,91 @@ class LlvmCodegen {
       std::cerr << "compiling statement" << std::endl;
       codegen_function(statement, jit, program);
     }
+  }
+
+  void compileProgram(const TypedProgramAST& program) {
+    auto context_holder = std::make_unique<llvm::LLVMContext>();
+    auto& llvm_context = *context_holder;
+    auto llvm_module = std::make_unique<llvm::Module>("torpul main module", llvm_context);
+    auto llvm_target_triple = llvm::sys::getDefaultTargetTriple();
+    llvm_module->setTargetTriple(llvm_target_triple);
+    std::string error_msg;
+    auto llvm_target = llvm::TargetRegistry::lookupTarget(llvm_target_triple, error_msg);
+    if (!llvm_target) {
+      llvm::errs() << error_msg;
+      return;
+    }
+    auto llvm_cpu = "generic";
+    auto llvm_features = "";
+    llvm::TargetOptions llvm_target_options;
+    auto llvm_reloc_model = llvm::Optional<llvm::Reloc::Model>();
+    auto llvm_target_machine = llvm_target->createTargetMachine(llvm_target_triple, llvm_cpu, llvm_features, llvm_target_options, llvm_reloc_model);
+    llvm_module->setDataLayout(llvm_target_machine->createDataLayout());
+
+    for (const auto& statement : program.statements) {
+      const auto& decl = std::get<std::unique_ptr<TypedFunctionDeclarationAST>>(statement);
+      auto builder = std::make_unique<llvm::IRBuilder<>>(llvm_context);
+      auto* llvm_function = make_function(*decl, llvm_context, llvm_module);
+      auto* bb = llvm::BasicBlock::Create(llvm_context, "entry", llvm_function);
+      builder->SetInsertPoint(bb);
+
+      // std::cerr << "...created basic block:" << bb << std::endl;
+
+      std::map<std::string, llvm::Value*> variable_lookup;
+      for (auto& arg : llvm_function->args()) {
+        variable_lookup[std::string(arg.getName())] = &arg;
+      }
+
+      for (const auto& statement : decl->statements) {
+        std::visit(overloaded{
+                       [&](const std::unique_ptr<TypedReturnStatementAST>& ret) {
+                         auto* retval = codegen_value(ret->return_value, llvm_context, llvm_module, program, builder, variable_lookup);
+                         builder->CreateRet(retval);
+                       },
+                   },
+                   statement);
+      }
+
+      llvm::verifyFunction(*llvm_function);
+
+      std::cerr << "Defined function:" << std::endl;
+      llvm_function->print(llvm::errs());
+      std::cerr << std::endl;
+
+      auto llvm_fpm = std::make_unique<llvm::legacy::FunctionPassManager>(llvm_module.get());
+      llvm_fpm->add(llvm::createInstructionCombiningPass());
+      llvm_fpm->add(llvm::createReassociatePass());
+      llvm_fpm->add(llvm::createGVNPass());
+      llvm_fpm->add(llvm::createCFGSimplificationPass());
+      llvm_fpm->doInitialization();
+      //   std::cerr << "optimizing..." << std::endl;
+      if (llvm_fpm->run(*llvm_function)) {
+        std::cerr << "=== after optimizing: ===" << std::endl;
+        llvm_function->print(llvm::errs());
+        std::cerr << std::endl;
+      };
+    }
+
+    std::string output_filename = "build/output.o";
+    std::error_code write_error_code;
+    llvm::raw_fd_ostream dest(output_filename, write_error_code, llvm::sys::fs::OF_None);
+
+    if (write_error_code) {
+      std::cerr << "Could not open file: " << write_error_code.message() << std::endl;
+    }
+
+    llvm::legacy::PassManager pass;
+    auto llvm_file_type = llvm::CGFT_ObjectFile;
+
+    if (llvm_target_machine->addPassesToEmitFile(pass, dest, nullptr, llvm_file_type)) {
+      std::cerr << "Target machine can't emit a file of this type: " << llvm_file_type << std::endl;
+      return;
+    }
+
+    pass.run(*llvm_module);
+    dest.flush();
+
+    std::cerr << "Wrote output file: " << output_filename << std::endl;
   }
 
  private:
@@ -162,9 +252,8 @@ class LlvmCodegen {
                                    if (mode == Mode::Verbose) {
                                      std::cerr << indent_prefix << "compiling if-then-else" << std::endl;
                                    }
-                                   auto* condition = codegen_value(decl->condition, llvm_context, llvm_module, program, builder, variable_lookup);
-                                   // TODO: cast to i1, it shouldn't compile without it?
-                                   // builder->CreateFCmpONE(condition, lvm::ConstantFP::get(llvm_context, llvm::APFloat(0.0)), "if_condition");
+                                   auto* raw_condition = codegen_value(decl->condition, llvm_context, llvm_module, program, builder, variable_lookup);
+                                   auto* condition = builder->CreateFCmpONE(raw_condition, llvm::ConstantFP::get(llvm_context, llvm::APFloat(0.0)), "if_condition");
 
                                    auto* current_parent_function = builder->GetInsertBlock()->getParent();
 
