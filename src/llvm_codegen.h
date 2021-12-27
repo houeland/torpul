@@ -42,8 +42,13 @@ class LlvmCodegen {
 
     std::cerr << "initialized codegen" << std::endl;
     for (const auto& statement : program.statements) {
+      auto context_holder = std::make_unique<llvm::LLVMContext>();
+      auto& llvm_context = *context_holder;
+      auto llvm_module = std::make_unique<llvm::Module>("torpul module", llvm_context);
+      llvm_module->setDataLayout(jit.data_layout);
       std::cerr << "compiling statement" << std::endl;
-      codegen_function(statement, jit, program);
+      codegen_function(statement, program, llvm_context, llvm_module);
+      jit.AddModule(llvm::orc::ThreadSafeModule(std::move(llvm_module), std::move(context_holder)));
     }
   }
 
@@ -67,47 +72,7 @@ class LlvmCodegen {
     llvm_module->setDataLayout(llvm_target_machine->createDataLayout());
 
     for (const auto& statement : program.statements) {
-      const auto& decl = std::get<std::unique_ptr<TypedFunctionDeclarationAST>>(statement);
-      auto builder = std::make_unique<llvm::IRBuilder<>>(llvm_context);
-      auto* llvm_function = make_function(*decl, llvm_context, llvm_module);
-      auto* bb = llvm::BasicBlock::Create(llvm_context, "entry", llvm_function);
-      builder->SetInsertPoint(bb);
-
-      // std::cerr << "...created basic block:" << bb << std::endl;
-
-      std::map<std::string, llvm::Value*> variable_lookup;
-      for (auto& arg : llvm_function->args()) {
-        variable_lookup[std::string(arg.getName())] = &arg;
-      }
-
-      for (const auto& statement : decl->statements) {
-        std::visit(overloaded{
-                       [&](const std::unique_ptr<TypedReturnStatementAST>& ret) {
-                         auto* retval = codegen_value(ret->return_value, llvm_context, llvm_module, program, builder, variable_lookup);
-                         builder->CreateRet(retval);
-                       },
-                   },
-                   statement);
-      }
-
-      llvm::verifyFunction(*llvm_function);
-
-      std::cerr << "Defined function:" << std::endl;
-      llvm_function->print(llvm::errs());
-      std::cerr << std::endl;
-
-      auto llvm_fpm = std::make_unique<llvm::legacy::FunctionPassManager>(llvm_module.get());
-      llvm_fpm->add(llvm::createInstructionCombiningPass());
-      llvm_fpm->add(llvm::createReassociatePass());
-      llvm_fpm->add(llvm::createGVNPass());
-      llvm_fpm->add(llvm::createCFGSimplificationPass());
-      llvm_fpm->doInitialization();
-      //   std::cerr << "optimizing..." << std::endl;
-      if (llvm_fpm->run(*llvm_function)) {
-        std::cerr << "=== after optimizing: ===" << std::endl;
-        llvm_function->print(llvm::errs());
-        std::cerr << std::endl;
-      };
+      codegen_function(statement, program, llvm_context, llvm_module);
     }
 
     std::string output_filename = "build/output.o";
@@ -133,7 +98,7 @@ class LlvmCodegen {
   }
 
  private:
-  llvm::Function* codegen_function(const TypedTopLevelStatementAST& ast, LlvmJit& jit, const TypedProgramAST& program) {
+  llvm::Function* codegen_function(const TypedTopLevelStatementAST& ast, const TypedProgramAST& program, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
     auto old_indent = indent_prefix;
     indent_prefix += ">> ";
     auto* function = std::visit(overloaded{
@@ -142,12 +107,7 @@ class LlvmCodegen {
                                         std::cerr << indent_prefix << "compiling function: " << pretty_print_typed_function_declaration_header(*decl) << std::endl;
                                       }
 
-                                      auto context_holder = std::make_unique<llvm::LLVMContext>();
-                                      auto& llvm_context = *context_holder;
-                                      auto llvm_module = std::make_unique<llvm::Module>("torpul module", llvm_context);
-                                      llvm_module->setDataLayout(jit.data_layout);
                                       auto builder = std::make_unique<llvm::IRBuilder<>>(llvm_context);
-
                                       auto* llvm_function = make_function(*decl, llvm_context, llvm_module);
 
                                       auto* bb = llvm::BasicBlock::Create(llvm_context, "entry", llvm_function);
@@ -189,8 +149,16 @@ class LlvmCodegen {
                                         std::cerr << std::endl;
                                       };
                                       //   std::cerr << "...done optimizing" << std::endl;
-                                      jit.AddModule(llvm::orc::ThreadSafeModule(std::move(llvm_module), std::move(context_holder)));
-                                      return llvm_function;
+                                      return static_cast<llvm::Function*>(llvm_function);
+                                    },
+                                    [&](const std::unique_ptr<TypedExternDeclarationAST>& decl) {
+                                      if (mode == Mode::Verbose) {
+                                        std::cerr << indent_prefix << "compiling extern function: " << pretty_print_typed_extern_declaration_header(*decl) << std::endl;
+                                      }
+
+                                      auto builder = std::make_unique<llvm::IRBuilder<>>(llvm_context);
+                                      auto* llvm_function = make_extern(*decl, llvm_context, llvm_module);
+                                      return static_cast<llvm::Function*>(llvm_function);
                                     },
                                 },
                                 ast);
@@ -286,6 +254,29 @@ class LlvmCodegen {
   }
 
   llvm::Function* make_function(const TypedFunctionDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
+    // TODO: Support proper type representations rather than just doubles
+    std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
+    auto* function_type = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm_context), types, false);
+    auto* func = llvm::Function::Create(function_type, llvm::Function::ExternalLinkage, decl.function_name, llvm_module.get());
+
+    std::vector<std::string> param_names;
+    for (const auto& [name, type] : decl.parameters) {
+      param_names.push_back(name);
+    }
+    unsigned idx = 0;
+    for (auto& arg : func->args()) {
+      arg.setName(param_names[idx++]);
+    }
+
+    func->setWillReturn();
+    func->setNoSync();
+    func->setDoesNotThrow();
+    func->setDoesNotAccessMemory();
+    func->setSpeculatable();
+    return func;
+  }
+
+  llvm::Function* make_extern(const TypedExternDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
     // TODO: Support proper type representations rather than just doubles
     std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
     auto* function_type = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm_context), types, false);

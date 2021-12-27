@@ -1,10 +1,6 @@
-function Multiply(left: Integer, right: Integer): Integer
-  return 1
-endfunction
+extern function Multiply(left: Integer, right: Integer): Integer
 
-function GreaterThan(bigger: Float256, smaller: Float256): TruthValue
-  return false
-endfunction
+extern function GreaterThan(bigger: Float256, smaller: Float256): TruthValue
 
 function Square(n: Integer): Integer
   return call Multiply(left=n, right=n)
@@ -27,5 +23,5 @@ function Complicated(x: Integer, y: Float256): Integer
 endfunction
 
 function Main(): Integer
-  return call Complicated(x=17, y=1.0f256)
+  return call Complicated(x=17, y=150.0f256)
 endfunction

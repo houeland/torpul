@@ -17,6 +17,7 @@ enum class Token {
   term_then,
   term_else,
   term_endif,
+  term_extern,
   identifier_string,
   const_integer_string,
   const_float64_string,
@@ -60,6 +61,9 @@ std::ostream& operator<<(std::ostream& os, const Token& t) {
       return os;
     case Token::term_endif:
       os << "term_endif";
+      return os;
+    case Token::term_extern:
+      os << "term_extern";
       return os;
     case Token::identifier_string:
       os << "identifier_string";
@@ -169,6 +173,8 @@ class Lexer {
         return Token::term_else;
       } else if (identifier == "endif") {
         return Token::term_endif;
+      } else if (identifier == "extern") {
+        return Token::term_extern;
       } else if (identifier == "true") {
         return Token::const_true;
       } else if (identifier == "false") {

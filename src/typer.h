@@ -65,11 +65,18 @@ struct TypedFunctionDeclarationAST {
   std::vector<TypedFunctionBodyStatementAST> statements;
 };
 
-using TypedTopLevelStatementAST = std::variant<std::unique_ptr<TypedFunctionDeclarationAST>>;
+struct TypedExternDeclarationAST {
+  std::string function_name;
+  TypeAST function_return_type;
+  std::map<std::string, TypeAST> parameters;
+};
+
+using TypedTopLevelStatementAST = std::variant<std::unique_ptr<TypedFunctionDeclarationAST>, std::unique_ptr<TypedExternDeclarationAST>>;
 
 struct TypedProgramAST {
   std::vector<TypedTopLevelStatementAST> statements;
   std::map<std::string, const TypedFunctionDeclarationAST*> declared_functions;
+  std::map<std::string, const TypedExternDeclarationAST*> declared_externs;
 };
 
 struct VariableScope {
@@ -108,6 +115,14 @@ class Typer {
                             program.declared_functions[typed->function_name] = typed.get();
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
+                          [&](const ExternDeclarationAST& decl) {
+                            if (mode == Mode::Verbose) {
+                              std::cerr << "registering typed extern function: " << pretty_print_extern_declaration_header(decl) << std::endl;
+                            }
+                            auto typed = TypeExternDeclaration(decl, program);
+                            program.declared_externs[typed->function_name] = typed.get();
+                            return TypedTopLevelStatementAST(std::move(typed));
+                          },
                       },
                       *ast.get());
   }
@@ -140,6 +155,22 @@ class Typer {
         decl.function_return_type,
         decl.parameters,
         std::move(statements),
+    }));
+  }
+
+  std::unique_ptr<TypedExternDeclarationAST> TypeExternDeclaration(const ExternDeclarationAST& decl, const TypedProgramAST& program) const {
+    VariableScope scope;
+    for (const auto& [name, type] : decl.parameters) {
+      scope.sources[name] = "extern function(" + decl.function_name + ")-param(" + name + "):" + pretty_print_type(type);
+      scope.types[name] = type;
+    }
+    if (mode == Mode::Verbose) {
+      std::cerr << "typing extern function declaration: " << decl.function_name << ": " << pretty_print_type(decl.function_return_type) << std::endl;
+    }
+    return std::make_unique<TypedExternDeclarationAST>(TypedExternDeclarationAST({
+        decl.function_name,
+        decl.function_return_type,
+        decl.parameters,
     }));
   }
 
@@ -205,17 +236,34 @@ class Typer {
     return std::make_unique<TypedExpressionVariableAST>(TypedExpressionVariableAST({var.variable_name, source, type}));
   }
 
+  std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST> lookup_function(const std::string& function_name, const TypedProgramAST& program) const {
+    const auto func = program.declared_functions.find(function_name);
+    if (func != program.declared_functions.end()) {
+      return {
+          func->second->function_name,
+          func->second->parameters,
+          func->second->function_return_type,
+      };
+    }
+    const auto extfunc = program.declared_externs.find(function_name);
+    if (extfunc != program.declared_externs.end()) {
+      return {
+          extfunc->second->function_name,
+          extfunc->second->parameters,
+          extfunc->second->function_return_type,
+      };
+    }
+    std::cerr << "Error: function \"" << function_name << "\" not in scope" << std::endl;
+    assert(false);
+  }
+
   std::unique_ptr<TypedExpressionFunctionCallAST> TypeFunctionCallExpression(const ExpressionFunctionCallAST& call, const TypedProgramAST& program, VariableScope* scope) const {
     if (mode == Mode::Verbose) {
       std::cerr << "typing function call: " << call.function_name << std::endl;
     }
-    const auto func = program.declared_functions.find(call.function_name);
-    if (func == program.declared_functions.end()) {
-      std::cerr << "Error: function \"" << call.function_name << "\" not in scope" << std::endl;
-      assert(false);
-    }
+    const auto& [funcname, funcparams, funcreturntype] = lookup_function(call.function_name, program);
     std::map<std::string, TypedExpressionAST> parameter_values;
-    for (const auto& [name, need_type] : func->second->parameters) {
+    for (const auto& [name, need_type] : funcparams) {
       const auto ast = call.arguments.find(name);
       if (ast == call.arguments.end()) {
         std::cerr << "Error: no function call argument provided for " << call.function_name << "(...) parameter: \"" << name << "\"" << std::endl;
@@ -230,16 +278,16 @@ class Typer {
       parameter_values[name] = std::move(value);
     }
     for (const auto& [name, expr] : call.arguments) {
-      const auto param = func->second->parameters.find(name);
-      if (param == func->second->parameters.end()) {
+      const auto param = funcparams.find(name);
+      if (param == funcparams.end()) {
         std::cerr << "Error: unknown function argument provided in " << call.function_name << "(...) call: \"" << name << "\"" << std::endl;
         assert(false);
       }
     }
     return std::make_unique<TypedExpressionFunctionCallAST>(TypedExpressionFunctionCallAST({
-        func->second->function_name,
+        funcname,
         std::move(parameter_values),
-        func->second->function_return_type,
+        funcreturntype,
     }));
   }
 
@@ -286,6 +334,22 @@ class Typer {
 };
 
 std::string pretty_print_typed_function_declaration_header(const TypedFunctionDeclarationAST& decl) {
+  std::stringstream ss;
+  ss << decl.function_name << "(";
+  bool first_parameter = true;
+  for (const auto& [name, type] : decl.parameters) {
+    if (first_parameter) {
+      first_parameter = false;
+    } else {
+      ss << ", ";
+    }
+    ss << name << ": " << pretty_print_type(type);
+  }
+  ss << "): " << pretty_print_type(decl.function_return_type);
+  return ss.str();
+}
+
+std::string pretty_print_typed_extern_declaration_header(const TypedExternDeclarationAST& decl) {
   std::stringstream ss;
   ss << decl.function_name << "(";
   bool first_parameter = true;

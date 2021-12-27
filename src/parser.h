@@ -79,7 +79,13 @@ struct FunctionDeclarationAST {
   std::vector<std::unique_ptr<FunctionBodyStatementAST>> statements;
 };
 
-using TopLevelStatementAST = std::variant<FunctionDeclarationAST>;
+struct ExternDeclarationAST {
+  std::string function_name;
+  TypeAST function_return_type;
+  std::map<std::string, TypeAST> parameters;
+};
+
+using TopLevelStatementAST = std::variant<FunctionDeclarationAST, ExternDeclarationAST>;
 
 struct ProgramAST {
   std::vector<std::unique_ptr<TopLevelStatementAST>> statements;
@@ -268,10 +274,46 @@ class Parser {
     };
   }
 
+  ExternDeclarationAST ParseExternDeclaration() {
+    consume(Token::term_extern);
+    consume(Token::term_function);
+    const std::string function_name = consume_identifier();
+    consume(Token::open_paren);
+    std::map<std::string, TypeAST> parameters;
+    while (last_token == Token::identifier_string) {
+      const std::string param_name = consume_identifier();
+      consume(Token::colon);
+      const TypeAST param_type = consume_type();
+      if (parameters.count(param_name)) {
+        std::cerr << "Error: Repeated parameter name: " << param_name << std::endl;
+        assert(false);
+      }
+      parameters[param_name] = param_type;
+      if (last_token == Token::comma) {
+        consume(Token::comma);
+        continue;
+      } else {
+        break;
+      }
+    }
+    consume(Token::close_paren);
+    consume(Token::colon);
+    const TypeAST function_return_type = consume_type();
+    if (mode == Mode::Verbose) {
+      std::cerr << "parsed ExternDeclarationAST: " << function_name << std::endl;
+    }
+    return {
+        function_name,
+        function_return_type,
+        parameters,
+    };
+  }
   std::unique_ptr<TopLevelStatementAST> ParseTopLevelStatement() {
     switch (last_token) {
       case Token::term_function:
         return make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseFunctionDeclaration()}));
+      case Token::term_extern:
+        return make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseExternDeclaration()}));
       default:
         std::cerr << "Error: Expected top-level statement but found: " << last_token << std::endl;
         assert(false);
