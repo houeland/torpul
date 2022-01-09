@@ -91,6 +91,9 @@ void pretty_print_function_body_statement(const std::unique_ptr<FunctionBodyStat
                  [](const ReturnStatementAST& ret) {
                    std::cout << "  return " << pretty_print_expression(ret.return_value) << std::endl;
                  },
+                 [](const DefineStatementAST& def) {
+                   std::cout << "  define " << def.name << " as " << pretty_print_expression(def.value) << std::endl;
+                 },
              },
              *ast.get());
 }

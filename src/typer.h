@@ -56,7 +56,13 @@ struct TypedReturnStatementAST {
   TypeAST returned_type;
 };
 
-using TypedFunctionBodyStatementAST = std::variant<std::unique_ptr<TypedReturnStatementAST>>;
+struct TypedDefineStatementAST {
+  std::string name;
+  TypedExpressionAST value;
+  TypeAST returned_type;
+};
+
+using TypedFunctionBodyStatementAST = std::variant<std::unique_ptr<TypedReturnStatementAST>, std::unique_ptr<TypedDefineStatementAST>>;
 
 struct TypedFunctionDeclarationAST {
   std::string function_name;
@@ -137,14 +143,24 @@ class Typer {
     for (const auto& statement : decl.statements) {
       statements.emplace_back(TypeFunctionBodyStatement(statement, program, &scope));
     }
-    if (statements.size() != 1) {
-      // FUTURE: should eventually support other types of statements
-      std::cerr << "for now, function bodies must have exactly one return statement, but " << decl.function_name << " has " << statements.size() << " statements" << std::endl;
+    if (statements.size() < 1) {
+      std::cerr << "Error: function body of \"" << decl.function_name << "\" has no statements" << std::endl;
       assert(false);
     }
-    const auto& single_statement = std::get<std::unique_ptr<TypedReturnStatementAST>>(statements[0]);
-    if (single_statement->returned_type != decl.function_return_type) {
-      std::cerr << "Error: type mismatch in function: got " << pretty_print_type(single_statement->returned_type) << " returned for " << decl.function_name << "(...) but need " << pretty_print_type(decl.function_return_type) << std::endl;
+    for (int i = 0; i < (int)statements.size() - 1; i += 1) {
+      const auto* maybe_statement = std::get_if<std::unique_ptr<TypedReturnStatementAST>>(&statements[i]);
+      if (maybe_statement) {
+        std::cerr << "Error: function \"" << decl.function_name << "\" has a return statement in the middle of the function body instead of at the end" << std::endl;
+        assert(false);
+      }
+    }
+    const auto* last_statement = std::get_if<std::unique_ptr<TypedReturnStatementAST>>(&statements.back());
+    if (!last_statement) {
+      std::cerr << "Error: function body of \"" << decl.function_name << "\" must end with a return statement" << std::endl;
+      assert(false);
+    }
+    if (last_statement->get()->returned_type != decl.function_return_type) {
+      std::cerr << "Error: type mismatch in function: got " << pretty_print_type(last_statement->get()->returned_type) << " returned for " << decl.function_name << "(...) but need " << pretty_print_type(decl.function_return_type) << std::endl;
       assert(false);
     }
     if (mode == Mode::Verbose) {
@@ -179,6 +195,9 @@ class Typer {
                           [&](const ReturnStatementAST& ret) {
                             return TypedFunctionBodyStatementAST(TypeReturnStatement(ret, program, scope));
                           },
+                          [&](const DefineStatementAST& def) {
+                            return TypedFunctionBodyStatementAST(TypeDefineStatement(def, program, scope));
+                          },
                       },
                       *ast.get());
   }
@@ -190,6 +209,21 @@ class Typer {
       std::cerr << "typing return statement: " << pretty_print_type(type) << std::endl;
     }
     return std::make_unique<TypedReturnStatementAST>(TypedReturnStatementAST({std::move(expr), type}));
+  }
+
+  std::unique_ptr<TypedDefineStatementAST> TypeDefineStatement(const DefineStatementAST& def, const TypedProgramAST& program, VariableScope* scope) const {
+    if (scope->types.find(def.name) != scope->types.end()) {
+      std::cerr << "Error: variable \"" << def.name << "\" already exists" << std::endl;
+      assert(false);
+    }
+    auto expr = TypeExpression(def.value, program, scope);
+    auto type = expr.type;
+    scope->sources[def.name] = "define(" + def.name + "):" + pretty_print_type(type);
+    scope->types[def.name] = type;
+    if (mode == Mode::Verbose) {
+      std::cerr << "typing define statement: " << pretty_print_type(type) << std::endl;
+    }
+    return std::make_unique<TypedDefineStatementAST>(TypedDefineStatementAST({def.name, std::move(expr), type}));
   }
 
   TypedExpressionAST TypeExpression(const std::unique_ptr<ExpressionAST>& ast, const TypedProgramAST& program, VariableScope* scope) const {
@@ -236,32 +270,36 @@ class Typer {
     return std::make_unique<TypedExpressionVariableAST>(TypedExpressionVariableAST({var.variable_name, source, type}));
   }
 
-  std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST> lookup_function(const std::string& function_name, const TypedProgramAST& program) const {
+  std::optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>> lookup_function(const std::string& function_name, const TypedProgramAST& program) const {
     const auto func = program.declared_functions.find(function_name);
     if (func != program.declared_functions.end()) {
-      return {
+      return std::make_optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>>({
           func->second->function_name,
           func->second->parameters,
           func->second->function_return_type,
-      };
+      });
     }
     const auto extfunc = program.declared_externs.find(function_name);
     if (extfunc != program.declared_externs.end()) {
-      return {
+      return std::make_optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>>({
           extfunc->second->function_name,
           extfunc->second->parameters,
           extfunc->second->function_return_type,
-      };
+      });
     }
-    std::cerr << "Error: function \"" << function_name << "\" not in scope" << std::endl;
-    assert(false);
+    return std::nullopt;
   }
 
   std::unique_ptr<TypedExpressionFunctionCallAST> TypeFunctionCallExpression(const ExpressionFunctionCallAST& call, const TypedProgramAST& program, VariableScope* scope) const {
     if (mode == Mode::Verbose) {
       std::cerr << "typing function call: " << call.function_name << std::endl;
     }
-    const auto& [funcname, funcparams, funcreturntype] = lookup_function(call.function_name, program);
+    const auto maybe_function = lookup_function(call.function_name, program);
+    if (!maybe_function.has_value()) {
+      std::cerr << "Error: function \"" << call.function_name << "\" not in scope" << std::endl;
+      assert(false);
+    }
+    const auto& [funcname, funcparams, funcreturntype] = maybe_function.value();
     std::map<std::string, TypedExpressionAST> parameter_values;
     for (const auto& [name, need_type] : funcparams) {
       const auto ast = call.arguments.find(name);

@@ -3,7 +3,8 @@ extern function Multiply(left: Integer, right: Integer): Integer
 extern function GreaterThan(bigger: Float256, smaller: Float256): TruthValue
 
 function Square(n: Integer): Integer
-  return call Multiply(left=n, right=n)
+  define product as call Multiply(left=n, right=n)
+  return product
 endfunction
 
 function ControlFlow(x: TruthValue, y: Integer, z: Integer): Integer

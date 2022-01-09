@@ -126,6 +126,9 @@ class LlvmCodegen {
                                                          auto* retval = codegen_value(ret->return_value, llvm_context, llvm_module, program, builder, variable_lookup);
                                                          builder->CreateRet(retval);
                                                        },
+                                                       [&](const std::unique_ptr<TypedDefineStatementAST>& def) {
+                                                         variable_lookup[def->name] = codegen_value(def->value, llvm_context, llvm_module, program, builder, variable_lookup);
+                                                       },
                                                    },
                                                    statement);
                                       }

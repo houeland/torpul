@@ -70,7 +70,12 @@ struct ReturnStatementAST {
   std::unique_ptr<ExpressionAST> return_value;
 };
 
-using FunctionBodyStatementAST = std::variant<ReturnStatementAST>;
+struct DefineStatementAST {
+  std::string name;
+  std::unique_ptr<ExpressionAST> value;
+};
+
+using FunctionBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST>;
 
 struct FunctionDeclarationAST {
   std::string function_name;
@@ -224,12 +229,26 @@ class Parser {
     return {std::move(expression)};
   }
 
+  DefineStatementAST ParseDefineStatement() {
+    consume(Token::term_define);
+    const std::string name = consume_identifier();
+    consume(Token::term_as);
+    std::unique_ptr<ExpressionAST> expression = ParseExpression();
+    if (mode == Mode::Verbose) {
+      std::cerr << "parsed DefineStatementAST" << std::endl;
+    }
+    return {name, std::move(expression)};
+  }
+
   std::unique_ptr<FunctionBodyStatementAST> ParseFunctionBodyStatement() {
     switch (last_token) {
       case Token::term_return:
         return make_unique<FunctionBodyStatementAST>(FunctionBodyStatementAST({ParseReturnStatement()}));
+      case Token::term_define:
+        return make_unique<FunctionBodyStatementAST>(FunctionBodyStatementAST({ParseDefineStatement()}));
       default:
         std::cerr << "Error: Expected function body statement but found: " << last_token << std::endl;
+        std::cerr << "  on line " << last_token_line_number << ": " << lexer.get_consumed_line_content() << " ... " << lexer.consume_rest_of_line_for_error_message() << std::endl;
         assert(false);
     }
   }
@@ -365,12 +384,15 @@ class Parser {
   }
 
   void read_next_token() {
-    last_token = lexer.read_token();
+    auto value = lexer.read_token();
+    last_token = value.first;
+    last_token_line_number = value.second;
   }
 
   Parser(Lexer* lexer, Mode mode) : lexer(*lexer), last_token(Token::eof), mode(mode) {}
   Lexer& lexer;
   Token last_token;
+  int last_token_line_number;
   const Mode mode;
 };
 

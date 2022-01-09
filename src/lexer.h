@@ -18,6 +18,8 @@ enum class Token {
   term_else,
   term_endif,
   term_extern,
+  term_define,
+  term_as,
   identifier_string,
   const_integer_string,
   const_float64_string,
@@ -65,6 +67,12 @@ std::ostream& operator<<(std::ostream& os, const Token& t) {
     case Token::term_extern:
       os << "term_extern";
       return os;
+    case Token::term_define:
+      os << "term_define";
+      return os;
+    case Token::term_as:
+      os << "term_as";
+      return os;
     case Token::identifier_string:
       os << "identifier_string";
       return os;
@@ -109,12 +117,12 @@ std::ostream& operator<<(std::ostream& os, const Token& t) {
 
 class Lexer {
  public:
-  Token read_token() {
+  std::pair<Token, int> read_token() {
     Token token = read_token_impl();
     if (mode == Mode::Verbose) {
       show_read_token(token);
     }
-    return token;
+    return std::make_pair(token, line_number);
   }
 
   enum class Mode {
@@ -136,25 +144,51 @@ class Lexer {
     return current_number_content;
   }
 
+  std::string get_consumed_line_content() {
+    return consumed_line_so_far;
+  }
+
+  std::string consume_rest_of_line_for_error_message() {
+    std::string rest;
+    while (true) {
+      char c = getchar();
+      if (c == EOF || c == '\n') break;
+      rest += c;
+    }
+    return rest;
+  }
+
  private:
   Lexer(Mode mode) : mode(mode) {}
   std::string current_identifier_content;
   std::string current_number_content;
   int last_char = ' ';
+  int line_number = 1;
+  std::string consumed_line_so_far;
   const Mode mode;
+
+  int read_next_char() {
+    int c = getchar();
+    consumed_line_so_far += c;
+    if (c == '\n') {
+      line_number += 1;
+      consumed_line_so_far = "";
+    }
+    return c;
+  }
 
   Token read_token_impl() {
     current_identifier_content = "";
     current_number_content = "";
     while (isspace(last_char)) {
-      last_char = getchar();
+      last_char = read_next_char();
     }
 
     if (isalpha(last_char)) {
       std::string identifier;
       do {
         identifier += (char)last_char;
-        last_char = getchar();
+        last_char = read_next_char();
       } while (isalnum(last_char));
       //   std::cerr << "read identifier: " << identifier << std::endl;
       if (identifier == "function") {
@@ -175,6 +209,10 @@ class Lexer {
         return Token::term_endif;
       } else if (identifier == "extern") {
         return Token::term_extern;
+      } else if (identifier == "define") {
+        return Token::term_define;
+      } else if (identifier == "as") {
+        return Token::term_as;
       } else if (identifier == "true") {
         return Token::const_true;
       } else if (identifier == "false") {
@@ -187,17 +225,17 @@ class Lexer {
       std::string number = "";
       do {
         number += last_char;
-        last_char = getchar();
+        last_char = read_next_char();
       } while (isdigit(last_char));
       if (last_char == '.') {
         do {
           number += last_char;
-          last_char = getchar();
+          last_char = read_next_char();
         } while (isdigit(last_char));
         std::string suffix = "";
         do {
           suffix += last_char;
-          last_char = getchar();
+          last_char = read_next_char();
         } while (isalnum(last_char));
         if (suffix == "f64") {
           current_number_content = number;
