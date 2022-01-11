@@ -30,6 +30,8 @@ enum class Token {
   const_false,
   open_paren,
   close_paren,
+  symbol_lessthan,
+  symbol_greaterthan,
   colon,
   equals,
   comma,
@@ -104,6 +106,12 @@ std::ostream& operator<<(std::ostream& os, const Token& t) {
       return os;
     case Token::close_paren:
       os << "close_paren";
+      return os;
+    case Token::symbol_lessthan:
+      os << "symbol_lessthan";
+      return os;
+    case Token::symbol_greaterthan:
+      os << "symbol_greaterthan";
       return os;
     case Token::colon:
       os << "colon";
@@ -270,6 +278,12 @@ class Lexer {
     } else if (last_char == ')') {
       last_char = ' ';
       return Token::close_paren;
+    } else if (last_char == '<') {
+      last_char = ' ';
+      return Token::symbol_lessthan;
+    } else if (last_char == '>') {
+      last_char = ' ';
+      return Token::symbol_greaterthan;
     } else if (last_char == ':') {
       last_char = ' ';
       return Token::colon;

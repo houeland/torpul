@@ -86,6 +86,7 @@ struct DefineStatementAST {
 };
 
 using FunctionBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST>;
+using ProcedureBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST>;
 
 struct FunctionDeclarationAST {
   std::string function_name;
@@ -94,13 +95,20 @@ struct FunctionDeclarationAST {
   std::vector<std::unique_ptr<FunctionBodyStatementAST>> statements;
 };
 
+struct ProcedureDeclarationAST {
+  std::string procedure_name;
+  TypeAST procedure_return_type;
+  std::map<std::string, TypeAST> parameters;
+  std::vector<std::unique_ptr<ProcedureBodyStatementAST>> statements;
+};
+
 struct ExternDeclarationAST {
   std::string function_name;
   TypeAST function_return_type;
   std::map<std::string, TypeAST> parameters;
 };
 
-using TopLevelStatementAST = std::variant<FunctionDeclarationAST, ExternDeclarationAST>;
+using TopLevelStatementAST = std::variant<FunctionDeclarationAST, ProcedureDeclarationAST, ExternDeclarationAST>;
 
 struct ProgramAST {
   std::vector<std::unique_ptr<TopLevelStatementAST>> statements;
@@ -263,6 +271,19 @@ class Parser {
     }
   }
 
+  std::unique_ptr<ProcedureBodyStatementAST> ParseProcedureBodyStatement() {
+    switch (last_token) {
+      case Token::term_return:
+        return make_unique<ProcedureBodyStatementAST>(ProcedureBodyStatementAST({ParseReturnStatement()}));
+      case Token::term_define:
+        return make_unique<ProcedureBodyStatementAST>(ProcedureBodyStatementAST({ParseDefineStatement()}));
+      default:
+        std::cerr << "Error: Expected procedure body statement but found: " << last_token << std::endl;
+        std::cerr << "  on line " << last_token_line_number << ": " << lexer.get_consumed_line_content() << " ... " << lexer.consume_rest_of_line_for_error_message() << std::endl;
+        assert(false);
+    }
+  }
+
   FunctionDeclarationAST ParseFunctionDeclaration() {
     consume(Token::term_function);
     const std::string function_name = consume_identifier();
@@ -298,6 +319,46 @@ class Parser {
     return {
         function_name,
         function_return_type,
+        parameters,
+        std::move(statements),
+    };
+  }
+
+  ProcedureDeclarationAST ParseProcedureDeclaration() {
+    consume(Token::term_procedure);
+    const std::string procedure_name = consume_identifier();
+    consume(Token::open_paren);
+    std::map<std::string, TypeAST> parameters;
+    while (last_token == Token::identifier_string) {
+      const std::string param_name = consume_identifier();
+      consume(Token::colon);
+      const TypeAST param_type = consume_type();
+      if (parameters.count(param_name)) {
+        std::cerr << "Error: Repeated parameter name: " << param_name << std::endl;
+        assert(false);
+      }
+      parameters[param_name] = param_type;
+      if (last_token == Token::comma) {
+        consume(Token::comma);
+        continue;
+      } else {
+        break;
+      }
+    }
+    consume(Token::close_paren);
+    consume(Token::colon);
+    const TypeAST procedure_return_type = consume_type();
+    std::vector<std::unique_ptr<ProcedureBodyStatementAST>> statements;
+    while (last_token != Token::term_endprocedure) {
+      statements.push_back(ParseProcedureBodyStatement());
+    }
+    consume(Token::term_endprocedure);
+    if (mode == Mode::Verbose) {
+      std::cerr << "parsed ProcedureDeclarationAST: " << procedure_name << std::endl;
+    }
+    return {
+        procedure_name,
+        procedure_return_type,
         parameters,
         std::move(statements),
     };
@@ -341,6 +402,8 @@ class Parser {
     switch (last_token) {
       case Token::term_function:
         return make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseFunctionDeclaration()}));
+      case Token::term_procedure:
+        return make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseProcedureDeclaration()}));
       case Token::term_extern:
         return make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseExternDeclaration()}));
       default:
@@ -379,6 +442,11 @@ class Parser {
       return BuiltInNumberType::Float256;
     } else if (name == "TruthValue") {
       return TruthValueType{};
+    } else if (name == "IO") {
+      consume(Token::symbol_lessthan);
+      auto base_type = std::make_shared<TypeAST>(consume_type());
+      consume(Token::symbol_greaterthan);
+      return IoType{base_type};
     } else {
       std::cerr << "Error: Expected type but found: " << name << std::endl;
       assert(false);

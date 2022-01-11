@@ -101,6 +101,18 @@ void pretty_print_function_body_statement(const std::unique_ptr<FunctionBodyStat
              *ast.get());
 }
 
+void pretty_print_procedure_body_statement(const std::unique_ptr<ProcedureBodyStatementAST>& ast) {
+  std::visit(overloaded{
+                 [](const ReturnStatementAST& ret) {
+                   std::cout << "  return " << pretty_print_expression(ret.return_value) << std::endl;
+                 },
+                 [](const DefineStatementAST& def) {
+                   std::cout << "  define " << def.name << " as " << pretty_print_expression(def.value) << std::endl;
+                 },
+             },
+             *ast.get());
+}
+
 std::string pretty_print_function_declaration_header(const FunctionDeclarationAST& decl) {
   std::stringstream ss;
   ss << decl.function_name << "(";
@@ -117,6 +129,21 @@ std::string pretty_print_function_declaration_header(const FunctionDeclarationAS
   return ss.str();
 }
 
+std::string pretty_print_procedure_declaration_header(const ProcedureDeclarationAST& decl) {
+  std::stringstream ss;
+  ss << decl.procedure_name << "(";
+  bool first_parameter = true;
+  for (const auto& [name, type] : decl.parameters) {
+    if (first_parameter) {
+      first_parameter = false;
+    } else {
+      ss << ", ";
+    }
+    ss << name << ": " << pretty_print_type(type);
+  }
+  ss << "): " << pretty_print_type(decl.procedure_return_type);
+  return ss.str();
+}
 std::string pretty_print_extern_declaration_header(const ExternDeclarationAST& decl) {
   std::stringstream ss;
   ss << decl.function_name << "(";
@@ -141,6 +168,13 @@ void pretty_print_top_level_statement(const std::unique_ptr<TopLevelStatementAST
                      pretty_print_function_body_statement(statement);
                    }
                    std::cout << "endfunction" << std::endl;
+                 },
+                 [](const ProcedureDeclarationAST& decl) {
+                   std::cout << "procedure " << pretty_print_procedure_declaration_header(decl) << std::endl;
+                   for (const auto& statement : decl.statements) {
+                     pretty_print_procedure_body_statement(statement);
+                   }
+                   std::cout << "endprocedure" << std::endl;
                  },
                  [](const ExternDeclarationAST& decl) {
                    std::cout << "extern function " << pretty_print_extern_declaration_header(decl) << std::endl;

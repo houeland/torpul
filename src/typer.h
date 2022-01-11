@@ -121,6 +121,10 @@ class Typer {
                             program.declared_functions[typed->function_name] = typed.get();
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
+                          [&](const ProcedureDeclarationAST& decl) {
+                            assert(!"not implemented: TypeTopLevelStatement for ProcedureDeclarationAST");
+                            return TypedTopLevelStatementAST();
+                          },
                           [&](const ExternDeclarationAST& decl) {
                             if (mode == Mode::Verbose) {
                               std::cerr << "registering typed extern function: " << pretty_print_extern_declaration_header(decl) << std::endl;
