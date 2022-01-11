@@ -23,6 +23,6 @@ function Complicated(x: Integer, y: Float256): Integer
   endif
 endfunction
 
-function Main(): Integer
+procedure Main(): IO<Integer>
   return call Complicated(x=17, y=150.0f256)
-endfunction
+endprocedure

@@ -23,19 +23,29 @@ struct UserDefinedType {
   std::string type_name;
 };
 
-struct TruthValueType {
-};
-
 bool operator==(const UserDefinedType& a, const UserDefinedType& b) {
   return a.type_name == b.type_name;
 }
+
+struct TruthValueType {
+};
 
 bool operator==(const TruthValueType& a, const TruthValueType& b) {
   return true;
 }
 
+struct IoType;
+
 // TODO: remove monostate; it's not supported, just there to catch default-initialization errors
-using TypeAST = std::variant<std::monostate, BuiltInNumberType, TruthValueType, UserDefinedType>;
+using TypeAST = std::variant<std::monostate, BuiltInNumberType, TruthValueType, UserDefinedType, IoType>;
+
+struct IoType {
+  std::shared_ptr<TypeAST> base_type;
+};
+
+bool operator==(const IoType& a, const IoType& b) {
+  return *a.base_type == *b.base_type;
+}
 
 struct ExpressionNumberAST {
   std::string number_string;

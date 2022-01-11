@@ -17,6 +17,9 @@ overloaded(Ts...) -> overloaded<Ts...>;
 
 std::string pretty_print_type(const TypeAST& ast) {
   return std::visit(overloaded{
+                        [](const IoType& t) {
+                          return std::string("IO<") + pretty_print_type(*t.base_type) + std::string(">");
+                        },
                         [](const BuiltInNumberType& t) {
                           switch (t) {
                             case BuiltInNumberType::Integer:
