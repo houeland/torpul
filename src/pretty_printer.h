@@ -10,11 +10,6 @@ namespace torpul {
 
 namespace {
 
-template <class... Ts>
-struct overloaded : Ts... { using Ts::operator()...; };
-template <class... Ts>
-overloaded(Ts...) -> overloaded<Ts...>;
-
 std::string pretty_print_type(const TypeAST& ast) {
   return std::visit(overloaded{
                         [](const IoType& t) {
@@ -109,6 +104,13 @@ void pretty_print_procedure_body_statement(const std::unique_ptr<ProcedureBodySt
                  [](const DefineStatementAST& def) {
                    std::cout << "  define " << def.name << " as " << pretty_print_expression(def.value) << std::endl;
                  },
+                 [](const RunStatementAST& run) {
+                   std::cout << "  run" << std::endl;
+                   for (const auto& e : run.expressions) {
+                     std::cout << "    do " << pretty_print_expression(e) << std::endl;
+                   }
+                   std::cout << "  endrun" << std::endl;
+                 },
              },
              *ast.get());
 }
@@ -144,7 +146,8 @@ std::string pretty_print_procedure_declaration_header(const ProcedureDeclaration
   ss << "): " << pretty_print_type(decl.procedure_return_type);
   return ss.str();
 }
-std::string pretty_print_extern_declaration_header(const ExternDeclarationAST& decl) {
+
+std::string pretty_print_extern_function_declaration_header(const ExternFunctionDeclarationAST& decl) {
   std::stringstream ss;
   ss << decl.function_name << "(";
   bool first_parameter = true;
@@ -157,6 +160,22 @@ std::string pretty_print_extern_declaration_header(const ExternDeclarationAST& d
     ss << name << ": " << pretty_print_type(type);
   }
   ss << "): " << pretty_print_type(decl.function_return_type);
+  return ss.str();
+}
+
+std::string pretty_print_extern_procedure_declaration_header(const ExternProcedureDeclarationAST& decl) {
+  std::stringstream ss;
+  ss << decl.procedure_name << "(";
+  bool first_parameter = true;
+  for (const auto& [name, type] : decl.parameters) {
+    if (first_parameter) {
+      first_parameter = false;
+    } else {
+      ss << ", ";
+    }
+    ss << name << ": " << pretty_print_type(type);
+  }
+  ss << "): " << pretty_print_type(decl.procedure_return_type);
   return ss.str();
 }
 
@@ -176,8 +195,11 @@ void pretty_print_top_level_statement(const std::unique_ptr<TopLevelStatementAST
                    }
                    std::cout << "endprocedure" << std::endl;
                  },
-                 [](const ExternDeclarationAST& decl) {
-                   std::cout << "extern function " << pretty_print_extern_declaration_header(decl) << std::endl;
+                 [](const ExternFunctionDeclarationAST& decl) {
+                   std::cout << "extern function " << pretty_print_extern_function_declaration_header(decl) << std::endl;
+                 },
+                 [](const ExternProcedureDeclarationAST& decl) {
+                   std::cout << "extern procedure " << pretty_print_extern_procedure_declaration_header(decl) << std::endl;
                  },
              },
              *ast.get());

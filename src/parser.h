@@ -1,9 +1,13 @@
 #ifndef TORPUL_PARSER_H
 #define TORPUL_PARSER_H
 
+#define BOOST_STACKTRACE_GNU_SOURCE_NOT_REQUIRED 1
+
+#include <boost/stacktrace.hpp>
 #include <cassert>
 #include <iostream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <variant>
@@ -85,8 +89,12 @@ struct DefineStatementAST {
   std::unique_ptr<ExpressionAST> value;
 };
 
+struct RunStatementAST {
+  std::vector<std::unique_ptr<ExpressionAST>> expressions;
+};
+
 using FunctionBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST>;
-using ProcedureBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST>;
+using ProcedureBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST, RunStatementAST>;
 
 struct FunctionDeclarationAST {
   std::string function_name;
@@ -102,13 +110,19 @@ struct ProcedureDeclarationAST {
   std::vector<std::unique_ptr<ProcedureBodyStatementAST>> statements;
 };
 
-struct ExternDeclarationAST {
+struct ExternFunctionDeclarationAST {
   std::string function_name;
   TypeAST function_return_type;
   std::map<std::string, TypeAST> parameters;
 };
 
-using TopLevelStatementAST = std::variant<FunctionDeclarationAST, ProcedureDeclarationAST, ExternDeclarationAST>;
+struct ExternProcedureDeclarationAST {
+  std::string procedure_name;
+  TypeAST procedure_return_type;
+  std::map<std::string, TypeAST> parameters;
+};
+
+using TopLevelStatementAST = std::variant<FunctionDeclarationAST, ProcedureDeclarationAST, ExternProcedureDeclarationAST, ExternFunctionDeclarationAST>;
 
 struct ProgramAST {
   std::vector<std::unique_ptr<TopLevelStatementAST>> statements;
@@ -151,8 +165,7 @@ class Parser {
     while (last_token != Token::close_paren) {
       const std::string param_name = consume_identifier();
       if (parameters.count(param_name)) {
-        std::cerr << "Error: Repeated parameter name: " << param_name << std::endl;
-        assert(false);
+        fail_unexpected("Repeated parameter name: ");
       }
       consume(Token::equals);
       std::unique_ptr<ExpressionAST> param_value = ParseExpression();
@@ -233,8 +246,7 @@ class Parser {
       case Token::term_if:
         return std::make_unique<ExpressionAST>(ExpressionAST({ParseIfThenElseExpression()}));
       default:
-        std::cerr << "Error: Expected expression but found: " << last_token << std::endl;
-        assert(false);
+        fail_unexpected("Expected expression but found:");
     }
   }
 
@@ -258,6 +270,33 @@ class Parser {
     return {name, std::move(expression)};
   }
 
+  RunStatementAST ParseRunStatement() {
+    consume(Token::term_run);
+    std::vector<std::unique_ptr<ExpressionAST>> expressions;
+    bool done = false;
+    while (!done) {
+      switch (last_token) {
+        case Token::term_do: {
+          consume(Token::term_do);
+          std::unique_ptr<ExpressionAST> expression = ParseExpression();
+          expressions.push_back(std::move(expression));
+          break;
+        }
+        case Token::term_endrun:
+          done = true;
+          break;
+        default:
+          fail_unexpected("Expected run IO statement but found: ");
+          break;
+      }
+    }
+    consume(Token::term_endrun);
+    if (mode == Mode::Verbose) {
+      std::cerr << "parsed RunStatementAST" << std::endl;
+    }
+    return {std::move(expressions)};
+  }
+
   std::unique_ptr<FunctionBodyStatementAST> ParseFunctionBodyStatement() {
     switch (last_token) {
       case Token::term_return:
@@ -265,9 +304,7 @@ class Parser {
       case Token::term_define:
         return make_unique<FunctionBodyStatementAST>(FunctionBodyStatementAST({ParseDefineStatement()}));
       default:
-        std::cerr << "Error: Expected function body statement but found: " << last_token << std::endl;
-        std::cerr << "  on line " << last_token_line_number << ": " << lexer.get_consumed_line_content() << " ... " << lexer.consume_rest_of_line_for_error_message() << std::endl;
-        assert(false);
+        fail_unexpected("Expected function body statement but found: ");
     }
   }
 
@@ -277,10 +314,10 @@ class Parser {
         return make_unique<ProcedureBodyStatementAST>(ProcedureBodyStatementAST({ParseReturnStatement()}));
       case Token::term_define:
         return make_unique<ProcedureBodyStatementAST>(ProcedureBodyStatementAST({ParseDefineStatement()}));
+      case Token::term_run:
+        return make_unique<ProcedureBodyStatementAST>(ProcedureBodyStatementAST({ParseRunStatement()}));
       default:
-        std::cerr << "Error: Expected procedure body statement but found: " << last_token << std::endl;
-        std::cerr << "  on line " << last_token_line_number << ": " << lexer.get_consumed_line_content() << " ... " << lexer.consume_rest_of_line_for_error_message() << std::endl;
-        assert(false);
+        fail_unexpected("Expected procedure body statement but found: ");
     }
   }
 
@@ -294,8 +331,7 @@ class Parser {
       consume(Token::colon);
       const TypeAST param_type = consume_type();
       if (parameters.count(param_name)) {
-        std::cerr << "Error: Repeated parameter name: " << param_name << std::endl;
-        assert(false);
+        fail_unexpected("Repeated parameter name: ");
       }
       parameters[param_name] = param_type;
       if (last_token == Token::comma) {
@@ -334,8 +370,7 @@ class Parser {
       consume(Token::colon);
       const TypeAST param_type = consume_type();
       if (parameters.count(param_name)) {
-        std::cerr << "Error: Repeated parameter name: " << param_name << std::endl;
-        assert(false);
+        fail_unexpected("Repeated parameter name: ");
       }
       parameters[param_name] = param_type;
       if (last_token == Token::comma) {
@@ -364,10 +399,16 @@ class Parser {
     };
   }
 
-  ExternDeclarationAST ParseExternDeclaration() {
+  std::variant<ExternFunctionDeclarationAST, ExternProcedureDeclarationAST> ParseExternDeclaration() {
+    bool is_procedure = false;
     consume(Token::term_extern);
-    consume(Token::term_function);
-    const std::string function_name = consume_identifier();
+    if (last_token == Token::term_procedure) {
+      is_procedure = true;
+      consume(Token::term_procedure);
+    } else {
+      consume(Token::term_function);
+    }
+    const std::string extern_name = consume_identifier();
     consume(Token::open_paren);
     std::map<std::string, TypeAST> parameters;
     while (last_token == Token::identifier_string) {
@@ -375,8 +416,7 @@ class Parser {
       consume(Token::colon);
       const TypeAST param_type = consume_type();
       if (parameters.count(param_name)) {
-        std::cerr << "Error: Repeated parameter name: " << param_name << std::endl;
-        assert(false);
+        fail_unexpected("Repeated parameter name: ");
       }
       parameters[param_name] = param_type;
       if (last_token == Token::comma) {
@@ -388,31 +428,50 @@ class Parser {
     }
     consume(Token::close_paren);
     consume(Token::colon);
-    const TypeAST function_return_type = consume_type();
-    if (mode == Mode::Verbose) {
-      std::cerr << "parsed ExternDeclarationAST: " << function_name << std::endl;
+    const TypeAST return_type = consume_type();
+    if (is_procedure) {
+      if (mode == Mode::Verbose) {
+        std::cerr << "parsed ExternProcedureDeclarationAST: " << extern_name << std::endl;
+      }
+      return ExternProcedureDeclarationAST({
+          extern_name,
+          return_type,
+          parameters,
+      });
+    } else {
+      if (mode == Mode::Verbose) {
+        std::cerr << "parsed ExternFunctionDeclarationAST: " << extern_name << std::endl;
+      }
+      return ExternFunctionDeclarationAST({
+          extern_name,
+          return_type,
+          parameters,
+      });
     }
-    return {
-        function_name,
-        function_return_type,
-        parameters,
-    };
   }
   std::unique_ptr<TopLevelStatementAST> ParseTopLevelStatement() {
     switch (last_token) {
       case Token::term_function:
-        return make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseFunctionDeclaration()}));
+        return std::make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseFunctionDeclaration()}));
       case Token::term_procedure:
-        return make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseProcedureDeclaration()}));
+        return std::make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseProcedureDeclaration()}));
       case Token::term_extern:
-        return make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseExternDeclaration()}));
+        return std::visit(overloaded{
+                              [&](const ExternFunctionDeclarationAST& func) {
+                                return std::make_unique<TopLevelStatementAST>(func);
+                              },
+                              [&](const ExternProcedureDeclarationAST& proc) {
+                                return std::make_unique<TopLevelStatementAST>(proc);
+                              },
+                          },
+                          ParseExternDeclaration());
       default:
-        std::cerr << "Error: Expected top-level statement but found: " << last_token << std::endl;
-        assert(false);
+        fail_unexpected("Expected top-level statement but found: ");
     }
   }
 
   std::string consume_identifier() {
+    // TODO: show stacktrace and explain where/how it went wrong when not an identifier
     std::string name = lexer.get_identifier_content();
     consume(Token::identifier_string);
     return name;
@@ -448,15 +507,15 @@ class Parser {
       consume(Token::symbol_greaterthan);
       return IoType{base_type};
     } else {
-      std::cerr << "Error: Expected type but found: " << name << std::endl;
-      assert(false);
+      fail_unexpected("Expected type but found: ");
     }
   }
 
   void consume(Token t) {
     if (last_token != t) {
-      std::cerr << "Error: Expected " << t << " but found: " << last_token << std::endl;
-      assert(false);
+      std::stringstream ss;
+      ss << t;
+      fail_unexpected("Expected " + ss.str() + " but found: ");
     }
     read_next_token();
   }
@@ -472,6 +531,13 @@ class Parser {
   Token last_token;
   int last_token_line_number;
   const Mode mode;
+
+  [[noreturn]] void fail_unexpected(std::string message) {
+    std::cerr << message << last_token << std::endl;
+    std::cerr << "  on line " << last_token_line_number << ": " << lexer.get_consumed_line_content_before_last_token() << " ... " << lexer.consume_rest_of_line_for_error_message() << std::endl;
+    std::cerr << boost::stacktrace::stacktrace();
+    assert(false);
+  }
 };
 
 }  // namespace torpul

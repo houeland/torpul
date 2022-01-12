@@ -7,12 +7,12 @@
 #include "typer.h"
 
 int main() {
-  torpul::Lexer lexer = torpul::Lexer::Create();
-  torpul::Parser parser = torpul::Parser::Create(&lexer);
+  torpul::Lexer lexer = torpul::Lexer::Create(torpul::Lexer::Mode::Quiet);
+  torpul::Parser parser = torpul::Parser::Create(&lexer, torpul::Parser::Mode::Quiet);
   const auto parsed_program = parser.ParseProgram();
   torpul::pretty_print(parsed_program);
 
-  const torpul::Typer typer = torpul::Typer::Create();
+  const torpul::Typer typer = torpul::Typer::Create(torpul::Typer::Mode::Quiet);
   const auto typed_program = typer.TypeProgram(parsed_program);
 
   // TODO: move out of main?

@@ -7,12 +7,19 @@
 
 namespace torpul {
 
+namespace {
+
+template <class... Ts>
+struct overloaded : Ts... { using Ts::operator()...; };
+template <class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
+
+}  // namespace
+
 enum class Token {
   eof,
   term_function,
   term_endfunction,
-  term_procedure,
-  term_endprocedure,
   term_return,
   term_call,
   term_if,
@@ -22,6 +29,11 @@ enum class Token {
   term_extern,
   term_define,
   term_as,
+  term_procedure,
+  term_endprocedure,
+  term_run,
+  term_endrun,
+  term_do,
   identifier_string,
   const_integer_string,
   const_float64_string,
@@ -50,12 +62,6 @@ std::ostream& operator<<(std::ostream& os, const Token& t) {
     case Token::term_endfunction:
       os << "term_endfunction";
       return os;
-    case Token::term_procedure:
-      os << "term_procedure";
-      return os;
-    case Token::term_endprocedure:
-      os << "term_endprocedure";
-      return os;
     case Token::term_return:
       os << "term_return";
       return os;
@@ -82,6 +88,21 @@ std::ostream& operator<<(std::ostream& os, const Token& t) {
       return os;
     case Token::term_as:
       os << "term_as";
+      return os;
+    case Token::term_procedure:
+      os << "term_procedure";
+      return os;
+    case Token::term_endprocedure:
+      os << "term_endprocedure";
+      return os;
+    case Token::term_run:
+      os << "term_run";
+      return os;
+    case Token::term_endrun:
+      os << "term_endrun";
+      return os;
+    case Token::term_do:
+      os << "term_do";
       return os;
     case Token::identifier_string:
       os << "identifier_string";
@@ -134,6 +155,7 @@ std::ostream& operator<<(std::ostream& os, const Token& t) {
 class Lexer {
  public:
   std::pair<Token, int> read_token() {
+    previous_consumed_line_so_far = latest_consumed_line_so_far;
     Token token = read_token_impl();
     if (mode == Mode::Verbose) {
       show_read_token(token);
@@ -160,8 +182,8 @@ class Lexer {
     return current_number_content;
   }
 
-  std::string get_consumed_line_content() {
-    return consumed_line_so_far;
+  std::string get_consumed_line_content_before_last_token() {
+    return previous_consumed_line_so_far;
   }
 
   std::string consume_rest_of_line_for_error_message() {
@@ -180,15 +202,16 @@ class Lexer {
   std::string current_number_content;
   int last_char = ' ';
   int line_number = 1;
-  std::string consumed_line_so_far;
+  std::string latest_consumed_line_so_far;
+  std::string previous_consumed_line_so_far;
   const Mode mode;
 
   int read_next_char() {
     int c = getchar();
-    consumed_line_so_far += c;
+    latest_consumed_line_so_far += c;
     if (c == '\n') {
       line_number += 1;
-      consumed_line_so_far = "";
+      latest_consumed_line_so_far = "";
     }
     return c;
   }
@@ -211,10 +234,6 @@ class Lexer {
         return Token::term_function;
       } else if (identifier == "endfunction") {
         return Token::term_endfunction;
-      } else if (identifier == "procedure") {
-        return Token::term_procedure;
-      } else if (identifier == "endprocedure") {
-        return Token::term_endprocedure;
       } else if (identifier == "return") {
         return Token::term_return;
       } else if (identifier == "call") {
@@ -233,6 +252,16 @@ class Lexer {
         return Token::term_define;
       } else if (identifier == "as") {
         return Token::term_as;
+      } else if (identifier == "procedure") {
+        return Token::term_procedure;
+      } else if (identifier == "endprocedure") {
+        return Token::term_endprocedure;
+      } else if (identifier == "run") {
+        return Token::term_run;
+      } else if (identifier == "endrun") {
+        return Token::term_endrun;
+      } else if (identifier == "do") {
+        return Token::term_do;
       } else if (identifier == "true") {
         return Token::const_true;
       } else if (identifier == "false") {
