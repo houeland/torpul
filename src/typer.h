@@ -172,6 +172,10 @@ class Typer {
   }
 
   std::unique_ptr<TypedFunctionDeclarationAST> TypeFunctionDeclaration(const FunctionDeclarationAST& decl, const TypedProgramAST& program) const {
+    if (is_iotype(decl.function_return_type)) {
+      std::cerr << "Error: function \"" << decl.function_name << "\" returns a procedure IO type: " << pretty_print_type(decl.function_return_type) << std::endl;
+      assert(false);
+    }
     VariableScope scope;
     for (const auto& [name, type] : decl.parameters) {
       scope.sources[name] = "function(" + decl.function_name + ")-param(" + name + "):" + pretty_print_type(type);
@@ -213,35 +217,42 @@ class Typer {
   }
 
   std::unique_ptr<TypedProcedureDeclarationAST> TypeProcedureDeclaration(const ProcedureDeclarationAST& decl, const TypedProgramAST& program) const {
+    if (!is_iotype(decl.procedure_return_type)) {
+      std::cerr << "Error: procedure \"" << decl.procedure_name << "\" returns a function non-IO type: " << pretty_print_type(decl.procedure_return_type) << std::endl;
+      assert(false);
+    }
     VariableScope scope;
     for (const auto& [name, type] : decl.parameters) {
       scope.sources[name] = "procedure(" + decl.procedure_name + ")-param(" + name + "):" + pretty_print_type(type);
       scope.types[name] = type;
     }
     std::vector<TypedProcedureBodyStatementAST> statements;
-    // for (const auto& statement : decl.statements) {
-    //   statements.emplace_back(TypeFunctionBodyStatement(statement, program, &scope));
-    // }
-    // if (statements.size() < 1) {
-    //   std::cerr << "Error: function body of \"" << decl.function_name << "\" has no statements" << std::endl;
-    //   assert(false);
-    // }
-    // for (int i = 0; i < (int)statements.size() - 1; i += 1) {
-    //   const auto* maybe_statement = std::get_if<std::unique_ptr<TypedReturnStatementAST>>(&statements[i]);
-    //   if (maybe_statement) {
-    //     std::cerr << "Error: function \"" << decl.function_name << "\" has a return statement in the middle of the function body instead of at the end" << std::endl;
-    //     assert(false);
-    //   }
-    // }
-    // const auto* last_statement = std::get_if<std::unique_ptr<TypedReturnStatementAST>>(&statements.back());
-    // if (!last_statement) {
-    //   std::cerr << "Error: function body of \"" << decl.function_name << "\" must end with a return statement" << std::endl;
-    //   assert(false);
-    // }
-    // if (last_statement->get()->returned_type != decl.function_return_type) {
-    //   std::cerr << "Error: type mismatch in function: got " << pretty_print_type(last_statement->get()->returned_type) << " returned for " << decl.function_name << "(...) but need " << pretty_print_type(decl.function_return_type) << std::endl;
-    //   assert(false);
-    // }
+    for (const auto& statement : decl.statements) {
+      statements.emplace_back(TypeProcedureBodyStatement(statement, program, &scope));
+    }
+    if (statements.size() < 1) {
+      std::cerr << "Error: procedure body of \"" << decl.procedure_name << "\" has no statements" << std::endl;
+      assert(false);
+    }
+    for (int i = 0; i < (int)statements.size() - 1; i += 1) {
+      const auto* maybe_statement = std::get_if<std::unique_ptr<TypedReturnStatementAST>>(&statements[i]);
+      if (maybe_statement) {
+        std::cerr << "Error: procedure \"" << decl.procedure_name << "\" has a return statement in the middle of the procedure body instead of at the end" << std::endl;
+        assert(false);
+      }
+    }
+    const auto* last_statement = std::get_if<std::unique_ptr<TypedReturnStatementAST>>(&statements.back());
+    if (!last_statement) {
+      std::cerr << "Error: procedure body of \"" << decl.procedure_name << "\" must end with a return statement" << std::endl;
+      assert(false);
+    }
+    // TODO: don't hackily wrap it as IO without any syntax!
+    const auto* wrapped_return_type = std::get_if<IoType>(&decl.procedure_return_type);
+    assert(wrapped_return_type != nullptr);
+    if (last_statement->get()->returned_type != *wrapped_return_type->base_type) {
+      std::cerr << "Error: type mismatch in procedure: got " << pretty_print_type(last_statement->get()->returned_type) << " returned for " << decl.procedure_name << "(...) but need " << pretty_print_type(*wrapped_return_type->base_type) << std::endl;
+      assert(false);
+    }
     if (mode == Mode::Verbose) {
       std::cerr << "typing procedure declaration: " << decl.procedure_name << ": " << pretty_print_type(decl.procedure_return_type) << std::endl;
     }
@@ -254,7 +265,10 @@ class Typer {
   }
 
   std::unique_ptr<TypedExternFunctionDeclarationAST> TypeExternFunctionDeclaration(const ExternFunctionDeclarationAST& decl, const TypedProgramAST& program) const {
-    // TODO: check that it doesn't return IO<...>
+    if (is_iotype(decl.function_return_type)) {
+      std::cerr << "Error: function \"" << decl.function_name << "\" returns a procedure IO type: " << pretty_print_type(decl.function_return_type) << std::endl;
+      assert(false);
+    }
     VariableScope scope;
     for (const auto& [name, type] : decl.parameters) {
       scope.sources[name] = "extern function(" + decl.function_name + ")-param(" + name + "):" + pretty_print_type(type);
@@ -271,7 +285,10 @@ class Typer {
   }
 
   std::unique_ptr<TypedExternProcedureDeclarationAST> TypeExternProcedureDeclaration(const ExternProcedureDeclarationAST& decl, const TypedProgramAST& program) const {
-    // TODO: check that it returns IO<...>
+    if (!is_iotype(decl.procedure_return_type)) {
+      std::cerr << "Error: procedure \"" << decl.procedure_name << "\" returns a function non-IO type: " << pretty_print_type(decl.procedure_return_type) << std::endl;
+      assert(false);
+    }
     VariableScope scope;
     for (const auto& [name, type] : decl.parameters) {
       scope.sources[name] = "extern procedure(" + decl.procedure_name + ")-param(" + name + "):" + pretty_print_type(type);
@@ -299,6 +316,21 @@ class Typer {
                       *ast.get());
   }
 
+  TypedProcedureBodyStatementAST TypeProcedureBodyStatement(const std::unique_ptr<ProcedureBodyStatementAST>& ast, const TypedProgramAST& program, VariableScope* scope) const {
+    return std::visit(overloaded{
+                          [&](const ReturnStatementAST& ret) {
+                            return TypedProcedureBodyStatementAST(TypeReturnStatement(ret, program, scope));
+                          },
+                          [&](const DefineStatementAST& def) {
+                            return TypedProcedureBodyStatementAST(TypeDefineStatement(def, program, scope));
+                          },
+                          [&](const RunStatementAST& run) {
+                            return TypedProcedureBodyStatementAST(TypeRunStatement(run, program, scope));
+                          },
+                      },
+                      *ast.get());
+  }
+
   std::unique_ptr<TypedReturnStatementAST> TypeReturnStatement(const ReturnStatementAST& ret, const TypedProgramAST& program, VariableScope* scope) const {
     auto expr = TypeExpression(ret.return_value, program, scope);
     auto type = expr.type;
@@ -321,6 +353,17 @@ class Typer {
       std::cerr << "typing define statement: " << pretty_print_type(type) << std::endl;
     }
     return std::make_unique<TypedDefineStatementAST>(TypedDefineStatementAST({def.name, std::move(expr), type}));
+  }
+
+  std::unique_ptr<TypedRunStatementAST> TypeRunStatement(const RunStatementAST& run, const TypedProgramAST& program, VariableScope* scope) const {
+    std::vector<TypedExpressionAST> expressions;
+    for (const auto& expr : run.expressions) {
+      expressions.emplace_back(TypeExpression(expr, program, scope));
+    }
+    if (mode == Mode::Verbose) {
+      std::cerr << "typing run statement" << std::endl;
+    }
+    return std::make_unique<TypedRunStatementAST>(TypedRunStatementAST({std::move(expressions)}));
   }
 
   TypedExpressionAST TypeExpression(const std::unique_ptr<ExpressionAST>& ast, const TypedProgramAST& program, VariableScope* scope) const {
@@ -382,6 +425,22 @@ class Typer {
           extfunc->second->function_name,
           extfunc->second->parameters,
           extfunc->second->function_return_type,
+      });
+    }
+    const auto proc = program.declared_procedures.find(function_name);
+    if (proc != program.declared_procedures.end()) {
+      return std::make_optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>>({
+          proc->second->procedure_name,
+          proc->second->parameters,
+          proc->second->procedure_return_type,
+      });
+    }
+    const auto extproc = program.declared_extern_procedures.find(function_name);
+    if (extproc != program.declared_extern_procedures.end()) {
+      return std::make_optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>>({
+          extproc->second->procedure_name,
+          extproc->second->parameters,
+          extproc->second->procedure_return_type,
       });
     }
     return std::nullopt;

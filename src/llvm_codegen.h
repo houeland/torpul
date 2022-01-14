@@ -145,13 +145,13 @@ class LlvmCodegen {
                                       llvm_fpm->add(llvm::createGVNPass());
                                       llvm_fpm->add(llvm::createCFGSimplificationPass());
                                       llvm_fpm->doInitialization();
-                                      //   std::cerr << "optimizing..." << std::endl;
+                                      // std::cerr << "optimizing..." << std::endl;
                                       if (llvm_fpm->run(*llvm_function)) {
                                         std::cerr << "=== after optimizing: ===" << std::endl;
                                         llvm_function->print(llvm::errs());
                                         std::cerr << std::endl;
                                       };
-                                      //   std::cerr << "...done optimizing" << std::endl;
+                                      // std::cerr << "...done optimizing" << std::endl;
                                       return static_cast<llvm::Function*>(llvm_function);
                                     },
                                     [&](const std::unique_ptr<TypedExternFunctionDeclarationAST>& decl) {
@@ -161,15 +161,77 @@ class LlvmCodegen {
 
                                       auto builder = std::make_unique<llvm::IRBuilder<>>(llvm_context);
                                       auto* llvm_function = make_extern_function(*decl, llvm_context, llvm_module);
+                                      std::cerr << "Defined extern function:" << std::endl;
+                                      llvm_function->print(llvm::errs());
+                                      std::cerr << std::endl;
                                       return static_cast<llvm::Function*>(llvm_function);
                                     },
                                     [&](const std::unique_ptr<TypedProcedureDeclarationAST>& decl) {
-                                      assert(!"llvm_codegen: not implemented: TypedProcedureDeclarationAST");
-                                      return static_cast<llvm::Function*>(nullptr);
+                                      if (mode == Mode::Verbose) {
+                                        std::cerr << indent_prefix << "compiling procedure: " << pretty_print_typed_procedure_declaration_header(*decl) << std::endl;
+                                      }
+
+                                      auto builder = std::make_unique<llvm::IRBuilder<>>(llvm_context);
+                                      auto* llvm_function = make_procedure(*decl, llvm_context, llvm_module);
+
+                                      auto* bb = llvm::BasicBlock::Create(llvm_context, "entry", llvm_function);
+                                      builder->SetInsertPoint(bb);
+
+                                      // std::cerr << "...created basic block:" << bb << std::endl;
+
+                                      std::map<std::string, llvm::Value*> variable_lookup;
+                                      for (auto& arg : llvm_function->args()) {
+                                        variable_lookup[std::string(arg.getName())] = &arg;
+                                      }
+
+                                      for (const auto& statement : decl->statements) {
+                                        std::visit(overloaded{
+                                                       [&](const std::unique_ptr<TypedReturnStatementAST>& ret) {
+                                                         auto* retval = codegen_value(ret->return_value, llvm_context, llvm_module, program, builder, variable_lookup);
+                                                         builder->CreateRet(retval);
+                                                       },
+                                                       [&](const std::unique_ptr<TypedDefineStatementAST>& def) {
+                                                         variable_lookup[def->name] = codegen_value(def->value, llvm_context, llvm_module, program, builder, variable_lookup);
+                                                       },
+                                                       [&](const std::unique_ptr<TypedRunStatementAST>& run) {
+                                                         codegen_runstatement(run, llvm_context, llvm_module, program, builder, variable_lookup);
+                                                       },
+                                                   },
+                                                   statement);
+                                      }
+
+                                      llvm::verifyFunction(*llvm_function);
+
+                                      std::cerr << "Defined procedure:" << std::endl;
+                                      llvm_function->print(llvm::errs());
+                                      std::cerr << std::endl;
+
+                                      auto llvm_fpm = std::make_unique<llvm::legacy::FunctionPassManager>(llvm_module.get());
+                                      llvm_fpm->add(llvm::createInstructionCombiningPass());
+                                      llvm_fpm->add(llvm::createReassociatePass());
+                                      llvm_fpm->add(llvm::createGVNPass());
+                                      llvm_fpm->add(llvm::createCFGSimplificationPass());
+                                      llvm_fpm->doInitialization();
+                                      // std::cerr << "optimizing..." << std::endl;
+                                      if (llvm_fpm->run(*llvm_function)) {
+                                        std::cerr << "=== after optimizing: ===" << std::endl;
+                                        llvm_function->print(llvm::errs());
+                                        std::cerr << std::endl;
+                                      };
+                                      // std::cerr << "...done optimizing" << std::endl;
+                                      return static_cast<llvm::Function*>(llvm_function);
                                     },
                                     [&](const std::unique_ptr<TypedExternProcedureDeclarationAST>& decl) {
-                                      assert(!"llvm_codegen: not implemented: TypedExternProcedureDeclarationAST");
-                                      return static_cast<llvm::Function*>(nullptr);
+                                      if (mode == Mode::Verbose) {
+                                        std::cerr << indent_prefix << "compiling extern procedure: " << pretty_print_typed_extern_procedure_declaration_header(*decl) << std::endl;
+                                      }
+
+                                      auto builder = std::make_unique<llvm::IRBuilder<>>(llvm_context);
+                                      auto* llvm_function = make_extern_procedure(*decl, llvm_context, llvm_module);
+                                      std::cerr << "Defined extern procedure:" << std::endl;
+                                      llvm_function->print(llvm::errs());
+                                      std::cerr << std::endl;
+                                      return static_cast<llvm::Function*>(llvm_function);
                                     },
                                 },
                                 ast);
@@ -177,8 +239,7 @@ class LlvmCodegen {
     return function;
   }
 
-  llvm::Value*
-  codegen_value(const TypedExpressionAST& ast, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module, const TypedProgramAST& program, std::unique_ptr<llvm::IRBuilder<>>& builder, std::map<std::string, llvm::Value*>& variable_lookup) {
+  llvm::Value* codegen_value(const TypedExpressionAST& ast, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module, const TypedProgramAST& program, std::unique_ptr<llvm::IRBuilder<>>& builder, std::map<std::string, llvm::Value*>& variable_lookup) {
     auto old_indent = indent_prefix;
     indent_prefix += "  ";
     auto* value = std::visit(overloaded{
@@ -265,6 +326,12 @@ class LlvmCodegen {
     return value;
   }
 
+  void codegen_runstatement(const std::unique_ptr<TypedRunStatementAST>& run, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module, const TypedProgramAST& program, std::unique_ptr<llvm::IRBuilder<>>& builder, std::map<std::string, llvm::Value*>& variable_lookup) {
+    for (const auto& do_statement : run->expressions) {
+      codegen_value(do_statement, llvm_context, llvm_module, program, builder, variable_lookup);
+    }
+  }
+
   llvm::Function* make_function(const TypedFunctionDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
     // TODO: Support proper type representations rather than just doubles
     std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
@@ -288,6 +355,26 @@ class LlvmCodegen {
     return func;
   }
 
+  llvm::Function* make_procedure(const TypedProcedureDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
+    // TODO: Support proper type representations rather than just doubles
+    std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
+    auto* function_type = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm_context), types, false);
+    auto* func = llvm::Function::Create(function_type, llvm::Function::ExternalLinkage, decl.procedure_name, llvm_module.get());
+
+    std::vector<std::string> param_names;
+    for (const auto& [name, type] : decl.parameters) {
+      param_names.push_back(name);
+    }
+    unsigned idx = 0;
+    for (auto& arg : func->args()) {
+      arg.setName(param_names[idx++]);
+    }
+
+    func->setNoSync();
+    func->setDoesNotThrow();
+    func->setDoesNotAccessMemory();
+    return func;
+  }
   llvm::Function* make_extern_function(const TypedExternFunctionDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
     // TODO: Support proper type representations rather than just doubles
     std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
@@ -308,6 +395,27 @@ class LlvmCodegen {
     func->setDoesNotThrow();
     func->setDoesNotAccessMemory();
     func->setSpeculatable();
+    return func;
+  }
+
+  llvm::Function* make_extern_procedure(const TypedExternProcedureDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
+    // TODO: Support proper type representations rather than just doubles
+    std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
+    auto* function_type = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm_context), types, false);
+    auto* func = llvm::Function::Create(function_type, llvm::Function::ExternalLinkage, decl.procedure_name, llvm_module.get());
+
+    std::vector<std::string> param_names;
+    for (const auto& [name, type] : decl.parameters) {
+      param_names.push_back(name);
+    }
+    unsigned idx = 0;
+    for (auto& arg : func->args()) {
+      arg.setName(param_names[idx++]);
+    }
+
+    func->setNoSync();
+    func->setDoesNotThrow();
+    func->setDoesNotAccessMemory();
     return func;
   }
 

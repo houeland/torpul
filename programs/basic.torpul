@@ -3,6 +3,9 @@ extern function Multiply(left: Integer, right: Integer): Integer
 extern function GreaterThan(bigger: Float256, smaller: Float256): TruthValue
 
 extern procedure Print(value: Integer): IO<Integer>
+extern procedure Print256(value: Float256): IO<Integer>
+
+extern procedure DoNothing(): IO<Integer>
 
 function Square(n: Integer): Integer
   define product as call Multiply(left=n, right=n)
@@ -25,11 +28,39 @@ function Complicated(x: Integer, y: Float256): Integer
   endif
 endfunction
 
+procedure ConditionalExecution(x: Float256): IO<Integer>
+  define thisshouldnotprint as call Print256(value=x)
+  run
+    do if call GreaterThan(bigger=x, smaller=10.0f256) then
+      call Print(value=10)
+    else
+      call DoNothing()
+    endif
+    do if call GreaterThan(bigger=x, smaller=100.0f256) then
+      call Print(value=100)
+    else
+      call DoNothing()
+    endif
+    do if call GreaterThan(bigger=x, smaller=1000.0f256) then
+      call Print(value=1000)
+    else
+      call DoNothing()
+    endif
+  endrun
+  return 0
+endprocedure
+
 procedure Main(): IO<Integer>
   run
     do call Print(value=call Complicated(x=17, y=150.0f256))
     do call Print(value=call Complicated(x=17, y=15.0f256))
     do call Print(value=call Complicated(x=19, y=150.0f256))
+  endrun
+  run
+    do call ConditionalExecution(x=5.0f256)
+    do call ConditionalExecution(x=50.0f256)
+    do call ConditionalExecution(x=500.0f256)
+    do call ConditionalExecution(x=5000.0f256)
   endrun
   return 0
 endprocedure

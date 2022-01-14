@@ -22,6 +22,7 @@ enum class Token {
   term_endfunction,
   term_return,
   term_call,
+  term_callproc,
   term_if,
   term_then,
   term_else,
@@ -67,6 +68,9 @@ std::ostream& operator<<(std::ostream& os, const Token& t) {
       return os;
     case Token::term_call:
       os << "term_call";
+      return os;
+    case Token::term_callproc:
+      os << "term_callproc";
       return os;
     case Token::term_if:
       os << "term_if";
@@ -238,6 +242,8 @@ class Lexer {
         return Token::term_return;
       } else if (identifier == "call") {
         return Token::term_call;
+      } else if (identifier == "callproc") {
+        return Token::term_callproc;
       } else if (identifier == "if") {
         return Token::term_if;
       } else if (identifier == "then") {

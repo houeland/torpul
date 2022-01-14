@@ -51,6 +51,11 @@ bool operator==(const IoType& a, const IoType& b) {
   return *a.base_type == *b.base_type;
 }
 
+bool is_iotype(const TypeAST& ast) {
+  const auto* maybe_io = std::get_if<IoType>(&ast);
+  return maybe_io != nullptr;
+}
+
 struct ExpressionNumberAST {
   std::string number_string;
   BuiltInNumberType number_type;
@@ -471,7 +476,9 @@ class Parser {
   }
 
   std::string consume_identifier() {
-    // TODO: show stacktrace and explain where/how it went wrong when not an identifier
+    if (last_token != Token::identifier_string) {
+      fail_unexpected("Expected identified but found: ");
+    }
     std::string name = lexer.get_identifier_content();
     consume(Token::identifier_string);
     return name;
