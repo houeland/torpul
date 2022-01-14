@@ -154,14 +154,22 @@ class LlvmCodegen {
                                       //   std::cerr << "...done optimizing" << std::endl;
                                       return static_cast<llvm::Function*>(llvm_function);
                                     },
-                                    [&](const std::unique_ptr<TypedExternDeclarationAST>& decl) {
+                                    [&](const std::unique_ptr<TypedExternFunctionDeclarationAST>& decl) {
                                       if (mode == Mode::Verbose) {
-                                        std::cerr << indent_prefix << "compiling extern function: " << pretty_print_typed_extern_declaration_header(*decl) << std::endl;
+                                        std::cerr << indent_prefix << "compiling extern function: " << pretty_print_typed_extern_function_declaration_header(*decl) << std::endl;
                                       }
 
                                       auto builder = std::make_unique<llvm::IRBuilder<>>(llvm_context);
-                                      auto* llvm_function = make_extern(*decl, llvm_context, llvm_module);
+                                      auto* llvm_function = make_extern_function(*decl, llvm_context, llvm_module);
                                       return static_cast<llvm::Function*>(llvm_function);
+                                    },
+                                    [&](const std::unique_ptr<TypedProcedureDeclarationAST>& decl) {
+                                      assert(!"llvm_codegen: not implemented: TypedProcedureDeclarationAST");
+                                      return static_cast<llvm::Function*>(nullptr);
+                                    },
+                                    [&](const std::unique_ptr<TypedExternProcedureDeclarationAST>& decl) {
+                                      assert(!"llvm_codegen: not implemented: TypedExternProcedureDeclarationAST");
+                                      return static_cast<llvm::Function*>(nullptr);
                                     },
                                 },
                                 ast);
@@ -169,7 +177,8 @@ class LlvmCodegen {
     return function;
   }
 
-  llvm::Value* codegen_value(const TypedExpressionAST& ast, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module, const TypedProgramAST& program, std::unique_ptr<llvm::IRBuilder<>>& builder, std::map<std::string, llvm::Value*>& variable_lookup) {
+  llvm::Value*
+  codegen_value(const TypedExpressionAST& ast, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module, const TypedProgramAST& program, std::unique_ptr<llvm::IRBuilder<>>& builder, std::map<std::string, llvm::Value*>& variable_lookup) {
     auto old_indent = indent_prefix;
     indent_prefix += "  ";
     auto* value = std::visit(overloaded{
@@ -279,7 +288,7 @@ class LlvmCodegen {
     return func;
   }
 
-  llvm::Function* make_extern(const TypedExternDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
+  llvm::Function* make_extern_function(const TypedExternFunctionDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
     // TODO: Support proper type representations rather than just doubles
     std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
     auto* function_type = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm_context), types, false);

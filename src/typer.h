@@ -62,27 +62,49 @@ struct TypedDefineStatementAST {
   TypeAST returned_type;
 };
 
+struct TypedRunStatementAST {
+  std::vector<TypedExpressionAST> expressions;
+};
+
 using TypedFunctionBodyStatementAST = std::variant<std::unique_ptr<TypedReturnStatementAST>, std::unique_ptr<TypedDefineStatementAST>>;
+using TypedProcedureBodyStatementAST = std::variant<std::unique_ptr<TypedReturnStatementAST>, std::unique_ptr<TypedDefineStatementAST>, std::unique_ptr<TypedRunStatementAST>>;
+
+using ParameterList = std::map<std::string, TypeAST>;
 
 struct TypedFunctionDeclarationAST {
   std::string function_name;
   TypeAST function_return_type;
-  std::map<std::string, TypeAST> parameters;
+  ParameterList parameters;
   std::vector<TypedFunctionBodyStatementAST> statements;
 };
 
-struct TypedExternDeclarationAST {
+struct TypedExternFunctionDeclarationAST {
   std::string function_name;
   TypeAST function_return_type;
-  std::map<std::string, TypeAST> parameters;
+  ParameterList parameters;
 };
 
-using TypedTopLevelStatementAST = std::variant<std::unique_ptr<TypedFunctionDeclarationAST>, std::unique_ptr<TypedExternDeclarationAST>>;
+struct TypedProcedureDeclarationAST {
+  std::string procedure_name;
+  TypeAST procedure_return_type;
+  ParameterList parameters;
+  std::vector<TypedProcedureBodyStatementAST> statements;
+};
+
+struct TypedExternProcedureDeclarationAST {
+  std::string procedure_name;
+  TypeAST procedure_return_type;
+  ParameterList parameters;
+};
+
+using TypedTopLevelStatementAST = std::variant<std::unique_ptr<TypedFunctionDeclarationAST>, std::unique_ptr<TypedExternFunctionDeclarationAST>, std::unique_ptr<TypedProcedureDeclarationAST>, std::unique_ptr<TypedExternProcedureDeclarationAST>>;
 
 struct TypedProgramAST {
   std::vector<TypedTopLevelStatementAST> statements;
   std::map<std::string, const TypedFunctionDeclarationAST*> declared_functions;
-  std::map<std::string, const TypedExternDeclarationAST*> declared_externs;
+  std::map<std::string, const TypedExternFunctionDeclarationAST*> declared_extern_functions;
+  std::map<std::string, const TypedProcedureDeclarationAST*> declared_procedures;
+  std::map<std::string, const TypedExternProcedureDeclarationAST*> declared_extern_procedures;
 };
 
 struct VariableScope {
@@ -122,15 +144,19 @@ class Typer {
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
                           [&](const ProcedureDeclarationAST& decl) {
-                            assert(!"not implemented: TypeTopLevelStatement for ProcedureDeclarationAST");
-                            return TypedTopLevelStatementAST();
+                            if (mode == Mode::Verbose) {
+                              std::cerr << "registering typed procedure: " << pretty_print_procedure_declaration_header(decl) << std::endl;
+                            }
+                            auto typed = TypeProcedureDeclaration(decl, program);
+                            program.declared_procedures[typed->procedure_name] = typed.get();
+                            return TypedTopLevelStatementAST(std::move(typed));
                           },
                           [&](const ExternFunctionDeclarationAST& decl) {
                             if (mode == Mode::Verbose) {
                               std::cerr << "registering typed extern function: " << pretty_print_extern_function_declaration_header(decl) << std::endl;
                             }
                             auto typed = TypeExternFunctionDeclaration(decl, program);
-                            program.declared_externs[typed->function_name] = typed.get();
+                            program.declared_extern_functions[typed->function_name] = typed.get();
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
                           [&](const ExternProcedureDeclarationAST& decl) {
@@ -138,7 +164,7 @@ class Typer {
                               std::cerr << "registering typed extern procedure: " << pretty_print_extern_procedure_declaration_header(decl) << std::endl;
                             }
                             auto typed = TypeExternProcedureDeclaration(decl, program);
-                            program.declared_externs[typed->function_name] = typed.get();
+                            program.declared_extern_procedures[typed->procedure_name] = typed.get();
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
                       },
@@ -186,7 +212,48 @@ class Typer {
     }));
   }
 
-  std::unique_ptr<TypedExternDeclarationAST> TypeExternFunctionDeclaration(const ExternFunctionDeclarationAST& decl, const TypedProgramAST& program) const {
+  std::unique_ptr<TypedProcedureDeclarationAST> TypeProcedureDeclaration(const ProcedureDeclarationAST& decl, const TypedProgramAST& program) const {
+    VariableScope scope;
+    for (const auto& [name, type] : decl.parameters) {
+      scope.sources[name] = "procedure(" + decl.procedure_name + ")-param(" + name + "):" + pretty_print_type(type);
+      scope.types[name] = type;
+    }
+    std::vector<TypedProcedureBodyStatementAST> statements;
+    // for (const auto& statement : decl.statements) {
+    //   statements.emplace_back(TypeFunctionBodyStatement(statement, program, &scope));
+    // }
+    // if (statements.size() < 1) {
+    //   std::cerr << "Error: function body of \"" << decl.function_name << "\" has no statements" << std::endl;
+    //   assert(false);
+    // }
+    // for (int i = 0; i < (int)statements.size() - 1; i += 1) {
+    //   const auto* maybe_statement = std::get_if<std::unique_ptr<TypedReturnStatementAST>>(&statements[i]);
+    //   if (maybe_statement) {
+    //     std::cerr << "Error: function \"" << decl.function_name << "\" has a return statement in the middle of the function body instead of at the end" << std::endl;
+    //     assert(false);
+    //   }
+    // }
+    // const auto* last_statement = std::get_if<std::unique_ptr<TypedReturnStatementAST>>(&statements.back());
+    // if (!last_statement) {
+    //   std::cerr << "Error: function body of \"" << decl.function_name << "\" must end with a return statement" << std::endl;
+    //   assert(false);
+    // }
+    // if (last_statement->get()->returned_type != decl.function_return_type) {
+    //   std::cerr << "Error: type mismatch in function: got " << pretty_print_type(last_statement->get()->returned_type) << " returned for " << decl.function_name << "(...) but need " << pretty_print_type(decl.function_return_type) << std::endl;
+    //   assert(false);
+    // }
+    if (mode == Mode::Verbose) {
+      std::cerr << "typing procedure declaration: " << decl.procedure_name << ": " << pretty_print_type(decl.procedure_return_type) << std::endl;
+    }
+    return std::make_unique<TypedProcedureDeclarationAST>(TypedProcedureDeclarationAST({
+        decl.procedure_name,
+        decl.procedure_return_type,
+        decl.parameters,
+        std::move(statements),
+    }));
+  }
+
+  std::unique_ptr<TypedExternFunctionDeclarationAST> TypeExternFunctionDeclaration(const ExternFunctionDeclarationAST& decl, const TypedProgramAST& program) const {
     // TODO: check that it doesn't return IO<...>
     VariableScope scope;
     for (const auto& [name, type] : decl.parameters) {
@@ -196,15 +263,14 @@ class Typer {
     if (mode == Mode::Verbose) {
       std::cerr << "typing extern function declaration: " << decl.function_name << ": " << pretty_print_type(decl.function_return_type) << std::endl;
     }
-    return std::make_unique<TypedExternDeclarationAST>(TypedExternDeclarationAST({
+    return std::make_unique<TypedExternFunctionDeclarationAST>(TypedExternFunctionDeclarationAST({
         decl.function_name,
         decl.function_return_type,
         decl.parameters,
     }));
   }
 
-  // TODO: Make TypedExternProcedureDeclarationAST
-  std::unique_ptr<TypedExternDeclarationAST> TypeExternProcedureDeclaration(const ExternProcedureDeclarationAST& decl, const TypedProgramAST& program) const {
+  std::unique_ptr<TypedExternProcedureDeclarationAST> TypeExternProcedureDeclaration(const ExternProcedureDeclarationAST& decl, const TypedProgramAST& program) const {
     // TODO: check that it returns IO<...>
     VariableScope scope;
     for (const auto& [name, type] : decl.parameters) {
@@ -214,7 +280,7 @@ class Typer {
     if (mode == Mode::Verbose) {
       std::cerr << "typing extern procedure declaration: " << decl.procedure_name << ": " << pretty_print_type(decl.procedure_return_type) << std::endl;
     }
-    return std::make_unique<TypedExternDeclarationAST>(TypedExternDeclarationAST({
+    return std::make_unique<TypedExternProcedureDeclarationAST>(TypedExternProcedureDeclarationAST({
         decl.procedure_name,
         decl.procedure_return_type,
         decl.parameters,
@@ -310,8 +376,8 @@ class Typer {
           func->second->function_return_type,
       });
     }
-    const auto extfunc = program.declared_externs.find(function_name);
-    if (extfunc != program.declared_externs.end()) {
+    const auto extfunc = program.declared_extern_functions.find(function_name);
+    if (extfunc != program.declared_extern_functions.end()) {
       return std::make_optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>>({
           extfunc->second->function_name,
           extfunc->second->parameters,
@@ -402,11 +468,10 @@ class Typer {
   const Mode mode;
 };
 
-std::string pretty_print_typed_function_declaration_header(const TypedFunctionDeclarationAST& decl) {
+std::string pretty_print_parameter_list(const ParameterList parameters) {
   std::stringstream ss;
-  ss << decl.function_name << "(";
   bool first_parameter = true;
-  for (const auto& [name, type] : decl.parameters) {
+  for (const auto& [name, type] : parameters) {
     if (first_parameter) {
       first_parameter = false;
     } else {
@@ -414,24 +479,23 @@ std::string pretty_print_typed_function_declaration_header(const TypedFunctionDe
     }
     ss << name << ": " << pretty_print_type(type);
   }
-  ss << "): " << pretty_print_type(decl.function_return_type);
   return ss.str();
 }
 
-std::string pretty_print_typed_extern_declaration_header(const TypedExternDeclarationAST& decl) {
-  std::stringstream ss;
-  ss << decl.function_name << "(";
-  bool first_parameter = true;
-  for (const auto& [name, type] : decl.parameters) {
-    if (first_parameter) {
-      first_parameter = false;
-    } else {
-      ss << ", ";
-    }
-    ss << name << ": " << pretty_print_type(type);
-  }
-  ss << "): " << pretty_print_type(decl.function_return_type);
-  return ss.str();
+std::string pretty_print_typed_function_declaration_header(const TypedFunctionDeclarationAST& decl) {
+  return decl.function_name + "(" + pretty_print_parameter_list(decl.parameters) + "): " + pretty_print_type(decl.function_return_type);
+}
+
+std::string pretty_print_typed_extern_function_declaration_header(const TypedExternFunctionDeclarationAST& decl) {
+  return decl.function_name + "(" + pretty_print_parameter_list(decl.parameters) + "): " + pretty_print_type(decl.function_return_type);
+}
+
+std::string pretty_print_typed_procedure_declaration_header(const TypedProcedureDeclarationAST& decl) {
+  return decl.procedure_name + "(" + pretty_print_parameter_list(decl.parameters) + "): " + pretty_print_type(decl.procedure_return_type);
+}
+
+std::string pretty_print_typed_extern_procedure_declaration_header(const TypedExternProcedureDeclarationAST& decl) {
+  return decl.procedure_name + "(" + pretty_print_parameter_list(decl.parameters) + "): " + pretty_print_type(decl.procedure_return_type);
 }
 
 }  // namespace torpul
