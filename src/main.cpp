@@ -1,5 +1,4 @@
 #include "lexer.h"
-#include "llvm/Support/TargetSelect.h"
 #include "llvm_codegen.h"
 #include "llvm_jit.h"
 #include "parser.h"
@@ -15,12 +14,6 @@ int main() {
   const torpul::Typer typer = torpul::Typer::Create(torpul::Typer::Mode::Quiet);
   const auto typed_program = typer.TypeProgram(parsed_program);
 
-  // TODO: move out of main?
-  llvm::InitializeNativeTarget();
-  llvm::InitializeNativeTargetAsmPrinter();
-  llvm::InitializeNativeTargetAsmParser();
-
   torpul::LlvmCodegen codegen = torpul::LlvmCodegen::Create(torpul::LlvmCodegen::Mode::Verbose);
-  // codegen.doStuff(*typed_program);
   codegen.compileProgram(*typed_program);
 }

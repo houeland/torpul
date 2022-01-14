@@ -70,12 +70,18 @@ struct ExpressionVariableAST {
 };
 
 struct ExpressionFunctionCallAST;
+struct ExpressionProcedureCallAST;
 struct ExpressionIfThenElseAST;
 
-using ExpressionAST = std::variant<ExpressionNumberAST, ExpressionTruthValueAST, ExpressionVariableAST, ExpressionFunctionCallAST, ExpressionIfThenElseAST>;
+using ExpressionAST = std::variant<ExpressionNumberAST, ExpressionTruthValueAST, ExpressionVariableAST, ExpressionFunctionCallAST, ExpressionProcedureCallAST, ExpressionIfThenElseAST>;
 
 struct ExpressionFunctionCallAST {
   std::string function_name;
+  std::map<std::string, std::unique_ptr<ExpressionAST>> arguments;
+};
+
+struct ExpressionProcedureCallAST {
+  std::string procedure_name;
   std::map<std::string, std::unique_ptr<ExpressionAST>> arguments;
 };
 
@@ -189,6 +195,33 @@ class Parser {
     return {name, std::move(parameters)};
   }
 
+  ExpressionProcedureCallAST ParseProcedureCallExpression() {
+    consume(Token::term_callproc);
+    const std::string name = consume_identifier();
+    consume(Token::open_paren);
+    std::map<std::string, std::unique_ptr<ExpressionAST>> parameters;
+    while (last_token != Token::close_paren) {
+      const std::string param_name = consume_identifier();
+      if (parameters.count(param_name)) {
+        fail_unexpected("Repeated parameter name: ");
+      }
+      consume(Token::equals);
+      std::unique_ptr<ExpressionAST> param_value = ParseExpression();
+      parameters.insert(std::make_pair(param_name, std::move(param_value)));
+      if (last_token == Token::comma) {
+        consume(Token::comma);
+        continue;
+      } else {
+        break;
+      }
+    }
+    consume(Token::close_paren);
+    if (mode == Mode::Verbose) {
+      std::cerr << "parsed ExpressionProcedureCallAST: " << name << std::endl;
+    }
+    return {name, std::move(parameters)};
+  }
+
   ExpressionNumberAST ParseNumberExpression() {
     switch (last_token) {
       case Token::const_integer_string: {
@@ -238,6 +271,8 @@ class Parser {
         return std::make_unique<ExpressionAST>(ExpressionAST({ParseVariableExpression()}));
       case Token::term_call:
         return std::make_unique<ExpressionAST>(ExpressionAST({ParseFunctionCallExpression()}));
+      case Token::term_callproc:
+        return std::make_unique<ExpressionAST>(ExpressionAST({ParseProcedureCallExpression()}));
       case Token::const_integer_string:
       case Token::const_float64_string:
       case Token::const_float256_string:

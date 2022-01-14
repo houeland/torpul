@@ -75,6 +75,21 @@ std::string pretty_print_expression(const std::unique_ptr<ExpressionAST>& ast) {
                           ss << ")";
                           return ss.str();
                         },
+                        [](const ExpressionProcedureCallAST& expr) {
+                          std::stringstream ss;
+                          ss << "callproc " << expr.procedure_name << "(";
+                          bool first_argument = true;
+                          for (const auto& [name, expr] : expr.arguments) {
+                            if (first_argument) {
+                              first_argument = false;
+                            } else {
+                              ss << ", ";
+                            }
+                            ss << name << "=" << pretty_print_expression(expr);
+                          }
+                          ss << ")";
+                          return ss.str();
+                        },
                         [](const ExpressionIfThenElseAST& expr) {
                           std::stringstream ss;
                           ss << "if " << pretty_print_expression(expr.condition) << " then " << pretty_print_expression(expr.then_clause) << " else " << pretty_print_expression(expr.else_clause) << " endif";

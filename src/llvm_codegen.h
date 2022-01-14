@@ -12,6 +12,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
@@ -30,6 +31,9 @@ class LlvmCodegen {
   };
 
   static LlvmCodegen Create(Mode mode = Mode::Quiet) {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
     return LlvmCodegen(mode);
   }
 
@@ -288,6 +292,23 @@ class LlvmCodegen {
                                      argvalues.push_back(value);
                                    }
                                    return static_cast<llvm::Value*>(builder->CreateCall(func, argvalues, "call_" + decl->function_name + "_result"));
+                                 },
+                                 [&](const std::unique_ptr<TypedExpressionProcedureCallAST>& decl) {
+                                   if (mode == Mode::Verbose) {
+                                     std::cerr << indent_prefix << "compiling procedure call: " << decl->procedure_name << std::endl;
+                                   }
+                                   auto* proc = llvm_module->getFunction(decl->procedure_name);
+                                   if (!proc) {
+                                     const auto* procedure_decl = program.declared_functions.find(decl->procedure_name)->second;
+                                     proc = make_function(*procedure_decl, llvm_context, llvm_module);
+                                   }
+                                   std::vector<llvm::Value*> argvalues;
+                                   for (const auto& [name, argument_ast] : decl->parameter_values) {
+                                     auto* value = codegen_value(argument_ast, llvm_context, llvm_module, program, builder, variable_lookup);
+                                     argvalues.push_back(value);
+                                   }
+                                   // TODO: Don't do the call!
+                                   return static_cast<llvm::Value*>(builder->CreateCall(proc, argvalues, "callproc_" + decl->procedure_name + "_result"));
                                  },
                                  [&](const std::unique_ptr<TypedExpressionIfThenElseAST>& decl) {
                                    if (mode == Mode::Verbose) {

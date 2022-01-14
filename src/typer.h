@@ -31,15 +31,22 @@ struct TypedExpressionVariableAST {
 };
 
 struct TypedExpressionFunctionCallAST;
+struct TypedExpressionProcedureCallAST;
 struct TypedExpressionIfThenElseAST;
 
 struct TypedExpressionAST {
-  std::variant<std::unique_ptr<TypedExpressionNumberAST>, std::unique_ptr<TypedExpressionTruthValueAST>, std::unique_ptr<TypedExpressionVariableAST>, std::unique_ptr<TypedExpressionFunctionCallAST>, std::unique_ptr<TypedExpressionIfThenElseAST>> value;
+  std::variant<std::unique_ptr<TypedExpressionNumberAST>, std::unique_ptr<TypedExpressionTruthValueAST>, std::unique_ptr<TypedExpressionVariableAST>, std::unique_ptr<TypedExpressionProcedureCallAST>, std::unique_ptr<TypedExpressionFunctionCallAST>, std::unique_ptr<TypedExpressionIfThenElseAST>> value;
   TypeAST type;
 };
 
 struct TypedExpressionFunctionCallAST {
   std::string function_name;
+  std::map<std::string, TypedExpressionAST> parameter_values;
+  TypeAST type;
+};
+
+struct TypedExpressionProcedureCallAST {
+  std::string procedure_name;
   std::map<std::string, TypedExpressionAST> parameter_values;
   TypeAST type;
 };
@@ -378,6 +385,11 @@ class Typer {
                             auto type = expr->type;
                             return TypedExpressionAST({std::move(expr), type});
                           },
+                          [&](const ExpressionProcedureCallAST& call) {
+                            auto expr = TypeProcedureCallExpression(call, program, scope);
+                            auto type = expr->type;
+                            return TypedExpressionAST({std::move(expr), type});
+                          },
                           [&](const ExpressionNumberAST& number) {
                             auto expr = TypeNumberExpression(number, program, scope);
                             auto type = expr->type;
@@ -427,6 +439,10 @@ class Typer {
           extfunc->second->function_return_type,
       });
     }
+    return std::nullopt;
+  }
+
+  std::optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>> lookup_procedure(const std::string& function_name, const TypedProgramAST& program) const {
     const auto proc = program.declared_procedures.find(function_name);
     if (proc != program.declared_procedures.end()) {
       return std::make_optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>>({
@@ -453,6 +469,9 @@ class Typer {
     const auto maybe_function = lookup_function(call.function_name, program);
     if (!maybe_function.has_value()) {
       std::cerr << "Error: function \"" << call.function_name << "\" not in scope" << std::endl;
+      if (lookup_procedure(call.function_name, program)) {
+        std::cerr << "  " << call.function_name << "(...) is a procedure" << std::endl;
+      }
       assert(false);
     }
     const auto& [funcname, funcparams, funcreturntype] = maybe_function.value();
@@ -482,6 +501,48 @@ class Typer {
         funcname,
         std::move(parameter_values),
         funcreturntype,
+    }));
+  }
+
+  std::unique_ptr<TypedExpressionProcedureCallAST> TypeProcedureCallExpression(const ExpressionProcedureCallAST& call, const TypedProgramAST& program, VariableScope* scope) const {
+    if (mode == Mode::Verbose) {
+      std::cerr << "typing procedure call: " << call.procedure_name << std::endl;
+    }
+    const auto maybe_procedure = lookup_procedure(call.procedure_name, program);
+    if (!maybe_procedure.has_value()) {
+      std::cerr << "Error: procedure \"" << call.procedure_name << "\" not in scope" << std::endl;
+      if (lookup_function(call.procedure_name, program)) {
+        std::cerr << "  " << call.procedure_name << "(...) is a function" << std::endl;
+      }
+      assert(false);
+    }
+    const auto& [procname, procparams, procreturntype] = maybe_procedure.value();
+    std::map<std::string, TypedExpressionAST> parameter_values;
+    for (const auto& [name, need_type] : procparams) {
+      const auto ast = call.arguments.find(name);
+      if (ast == call.arguments.end()) {
+        std::cerr << "Error: no procedure call argument provided for " << call.procedure_name << "(...) parameter: \"" << name << "\"" << std::endl;
+        assert(false);
+      }
+      auto value = TypeExpression(ast->second, program, scope);
+      auto got_type = value.type;
+      if (got_type != need_type) {
+        std::cerr << "Error: type mismatch in procedure call argument: got " << pretty_print_type(got_type) << " but need " << pretty_print_type(need_type) << " for " << call.procedure_name << "(...) parameter " << name << std::endl;
+        assert(false);
+      }
+      parameter_values[name] = std::move(value);
+    }
+    for (const auto& [name, expr] : call.arguments) {
+      const auto param = procparams.find(name);
+      if (param == procparams.end()) {
+        std::cerr << "Error: unknown procedure argument provided in " << call.procedure_name << "(...) call: \"" << name << "\"" << std::endl;
+        assert(false);
+      }
+    }
+    return std::make_unique<TypedExpressionProcedureCallAST>(TypedExpressionProcedureCallAST({
+        procname,
+        std::move(parameter_values),
+        procreturntype,
     }));
   }
 
