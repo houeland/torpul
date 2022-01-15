@@ -20,7 +20,7 @@ function ControlFlow(x: TruthValue, y: Integer, z: Integer): Integer
   endif
 endfunction
 
-function Complicated(x: Integer, y: Float256): Integer
+function Combinations(x: Integer, y: Float256): Integer
   return if call GreaterThan(bigger=y, smaller=50.0f256) then
     call Square(n=x)
   else
@@ -28,9 +28,29 @@ function Complicated(x: Integer, y: Float256): Integer
   endif
 endfunction
 
+function Complicated(x: Integer, y: Float256): Integer
+  function CheckWith(against: Float256): TruthValue
+    return call GreaterThan(bigger=y, smaller=against)
+  endfunction
+  return if call CheckWith(against=50.0f256) then
+    call Square(n=x)
+  else
+    if call CheckWith(against=100.0f256) then
+      call Multiply(left=x, right=100)
+    else
+      call Multiply(left=x, right=2)
+    endif
+  endif
+endfunction
+
 procedure Main(): IO<Integer>
   run
-    do callproc Print(value=call Complicated(x=17, y=150.0f256))
+    do callproc Print(value=call Combinations(x=17, y=75.0f256))
+    do callproc Print(value=call Combinations(x=17, y=15.0f256))
+    do callproc Print(value=call Combinations(x=19, y=150.0f256))
+  endrun
+  run
+    do callproc Print(value=call Complicated(x=17, y=75.0f256))
     do callproc Print(value=call Complicated(x=17, y=15.0f256))
     do callproc Print(value=call Complicated(x=19, y=150.0f256))
   endrun

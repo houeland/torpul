@@ -26,7 +26,6 @@ struct TypedExpressionTruthValueAST {
 
 struct TypedExpressionVariableAST {
   std::string variable_name;
-  std::string source;
   TypeAST type;
 };
 
@@ -73,10 +72,10 @@ struct TypedRunStatementAST {
   std::vector<TypedExpressionAST> expressions;
 };
 
-using TypedFunctionBodyStatementAST = std::variant<std::unique_ptr<TypedReturnStatementAST>, std::unique_ptr<TypedDefineStatementAST>>;
-using TypedProcedureBodyStatementAST = std::variant<std::unique_ptr<TypedReturnStatementAST>, std::unique_ptr<TypedDefineStatementAST>, std::unique_ptr<TypedRunStatementAST>>;
+struct TypedFunctionDeclarationAST;
 
-using ParameterList = std::map<std::string, TypeAST>;
+using TypedFunctionBodyStatementAST = std::variant<std::unique_ptr<TypedReturnStatementAST>, std::unique_ptr<TypedDefineStatementAST>, std::unique_ptr<TypedFunctionDeclarationAST>>;
+using TypedProcedureBodyStatementAST = std::variant<std::unique_ptr<TypedReturnStatementAST>, std::unique_ptr<TypedDefineStatementAST>, std::unique_ptr<TypedRunStatementAST>>;
 
 struct TypedFunctionDeclarationAST {
   std::string function_name;
@@ -104,7 +103,7 @@ struct TypedExternProcedureDeclarationAST {
   ParameterList parameters;
 };
 
-using TypedTopLevelStatementAST = std::variant<std::unique_ptr<TypedFunctionDeclarationAST>, std::unique_ptr<TypedExternFunctionDeclarationAST>, std::unique_ptr<TypedProcedureDeclarationAST>, std::unique_ptr<TypedExternProcedureDeclarationAST>>;
+using TypedTopLevelStatementAST = std::variant<std::unique_ptr<TypedFunctionDeclarationAST>, std::unique_ptr<TypedDefineStatementAST>, std::unique_ptr<TypedExternFunctionDeclarationAST>, std::unique_ptr<TypedProcedureDeclarationAST>, std::unique_ptr<TypedExternProcedureDeclarationAST>>;
 
 struct TypedProgramAST {
   std::vector<TypedTopLevelStatementAST> statements;
@@ -114,10 +113,58 @@ struct TypedProgramAST {
   std::map<std::string, const TypedExternProcedureDeclarationAST*> declared_extern_procedures;
 };
 
-struct VariableScope {
-  VariableScope* parent_scope;
+class VariableScope {
+ public:
+  static VariableScope InitializeGlobalScope() {
+    return VariableScope(nullptr, "global-scope");
+  }
+
+  VariableScope create_nested_scope(std::string description) const {
+    return VariableScope(this, description);
+  }
+
+  void add(std::string name, TypeAST type, std::string source) {
+    if (lookup(name).has_value()) {
+      std::cerr << "Error: name already in scope when trying to define: \"" << name << "\": " << pretty_print_type(type) << " from " << source << std::endl;
+      std::cerr << "  defined from: " << lookup_source(name) << std::endl;
+      assert(false);
+    }
+    sources[name] = source;
+    types[name] = type;
+  }
+
+  std::optional<TypeAST> lookup(std::string name) const {
+    auto maybe_value = types.find(name);
+    if (maybe_value != types.end()) {
+      return maybe_value->second;
+    }
+    if (parent_scope) {
+      return parent_scope->lookup(name);
+    } else {
+      return std::nullopt;
+    }
+  }
+
+ private:
+  VariableScope(const VariableScope* parent_scope, std::string description) : parent_scope(parent_scope), description(description) {}
+
+  const VariableScope* parent_scope;
+  std::string description;
   std::map<std::string, std::string> sources;
   std::map<std::string, TypeAST> types;
+
+  std::string lookup_source(std::string name) const {
+    auto maybe_value = sources.find(name);
+    if (maybe_value != sources.end()) {
+      return maybe_value->second;
+    }
+    if (parent_scope) {
+      return parent_scope->lookup_source(name);
+    } else {
+      std::cerr << "Failed to look up name: " << name << std::endl;
+      assert(!"Internal error: could not find source when looking up name");
+    }
+  }
 };
 
 class Typer {
@@ -132,29 +179,36 @@ class Typer {
   }
 
   std::unique_ptr<TypedProgramAST> TypeProgram(const std::unique_ptr<ProgramAST>& program) const {
+    auto scope = VariableScope::InitializeGlobalScope();
     auto typed = std::make_unique<TypedProgramAST>();
     for (const auto& statement : program->statements) {
-      typed->statements.emplace_back(TypeTopLevelStatement(statement, *typed));
+      typed->statements.emplace_back(TypeTopLevelStatement(statement, *typed, &scope));
     }
     return typed;
   }
 
  private:
-  TypedTopLevelStatementAST TypeTopLevelStatement(const std::unique_ptr<TopLevelStatementAST>& ast, TypedProgramAST& program) const {
+  TypedTopLevelStatementAST TypeTopLevelStatement(const std::unique_ptr<TopLevelStatementAST>& ast, TypedProgramAST& program, VariableScope* scope) const {
     return std::visit(overloaded{
                           [&](const FunctionDeclarationAST& decl) {
                             if (mode == Mode::Verbose) {
                               std::cerr << "registering typed function: " << pretty_print_function_declaration_header(decl) << std::endl;
                             }
-                            auto typed = TypeFunctionDeclaration(decl, program);
+                            auto typed = TypeFunctionDeclaration(decl, program, scope);
                             program.declared_functions[typed->function_name] = typed.get();
+                            return TypedTopLevelStatementAST(std::move(typed));
+                          },
+                          [&](const DefineStatementAST& def) {
+                            auto typed = TypeDefineStatement(def, program, scope);
+                            auto sourcedesc = "top-level-define(" + typed->name + "):" + pretty_print_type(typed->returned_type);
+                            scope->add(typed->name, typed->returned_type, sourcedesc);
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
                           [&](const ProcedureDeclarationAST& decl) {
                             if (mode == Mode::Verbose) {
                               std::cerr << "registering typed procedure: " << pretty_print_procedure_declaration_header(decl) << std::endl;
                             }
-                            auto typed = TypeProcedureDeclaration(decl, program);
+                            auto typed = TypeProcedureDeclaration(decl, program, scope);
                             program.declared_procedures[typed->procedure_name] = typed.get();
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
@@ -162,7 +216,7 @@ class Typer {
                             if (mode == Mode::Verbose) {
                               std::cerr << "registering typed extern function: " << pretty_print_extern_function_declaration_header(decl) << std::endl;
                             }
-                            auto typed = TypeExternFunctionDeclaration(decl, program);
+                            auto typed = TypeExternFunctionDeclaration(decl, program, scope);
                             program.declared_extern_functions[typed->function_name] = typed.get();
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
@@ -170,27 +224,28 @@ class Typer {
                             if (mode == Mode::Verbose) {
                               std::cerr << "registering typed extern procedure: " << pretty_print_extern_procedure_declaration_header(decl) << std::endl;
                             }
-                            auto typed = TypeExternProcedureDeclaration(decl, program);
+                            auto typed = TypeExternProcedureDeclaration(decl, program, scope);
                             program.declared_extern_procedures[typed->procedure_name] = typed.get();
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
-                      },
+                      }  // namespace torpul
+                      ,
                       *ast.get());
   }
 
-  std::unique_ptr<TypedFunctionDeclarationAST> TypeFunctionDeclaration(const FunctionDeclarationAST& decl, const TypedProgramAST& program) const {
+  std::unique_ptr<TypedFunctionDeclarationAST> TypeFunctionDeclaration(const FunctionDeclarationAST& decl, const TypedProgramAST& program, const VariableScope* parent_scope) const {
     if (is_iotype(decl.function_return_type)) {
       std::cerr << "Error: function \"" << decl.function_name << "\" returns a procedure IO type: " << pretty_print_type(decl.function_return_type) << std::endl;
       assert(false);
     }
-    VariableScope scope;
+    VariableScope funcscope = parent_scope->create_nested_scope("function(" + decl.function_name + ")");
     for (const auto& [name, type] : decl.parameters) {
-      scope.sources[name] = "function(" + decl.function_name + ")-param(" + name + "):" + pretty_print_type(type);
-      scope.types[name] = type;
+      auto sourcedesc = "function(" + decl.function_name + ")-param(" + name + "):" + pretty_print_type(type);
+      funcscope.add(name, type, sourcedesc);
     }
     std::vector<TypedFunctionBodyStatementAST> statements;
     for (const auto& statement : decl.statements) {
-      statements.emplace_back(TypeFunctionBodyStatement(statement, program, &scope));
+      statements.emplace_back(TypeFunctionBodyStatement(statement, program, &funcscope));
     }
     if (statements.size() < 1) {
       std::cerr << "Error: function body of \"" << decl.function_name << "\" has no statements" << std::endl;
@@ -223,19 +278,19 @@ class Typer {
     }));
   }
 
-  std::unique_ptr<TypedProcedureDeclarationAST> TypeProcedureDeclaration(const ProcedureDeclarationAST& decl, const TypedProgramAST& program) const {
+  std::unique_ptr<TypedProcedureDeclarationAST> TypeProcedureDeclaration(const ProcedureDeclarationAST& decl, const TypedProgramAST& program, const VariableScope* parent_scope) const {
     if (!is_iotype(decl.procedure_return_type)) {
       std::cerr << "Error: procedure \"" << decl.procedure_name << "\" returns a function non-IO type: " << pretty_print_type(decl.procedure_return_type) << std::endl;
       assert(false);
     }
-    VariableScope scope;
+    VariableScope procscope = parent_scope->create_nested_scope("procedure(" + decl.procedure_name + ")");
     for (const auto& [name, type] : decl.parameters) {
-      scope.sources[name] = "procedure(" + decl.procedure_name + ")-param(" + name + "):" + pretty_print_type(type);
-      scope.types[name] = type;
+      auto sourcedesc = "procedure(" + decl.procedure_name + ")-param(" + name + "):" + pretty_print_type(type);
+      procscope.add(name, type, sourcedesc);
     }
     std::vector<TypedProcedureBodyStatementAST> statements;
     for (const auto& statement : decl.statements) {
-      statements.emplace_back(TypeProcedureBodyStatement(statement, program, &scope));
+      statements.emplace_back(TypeProcedureBodyStatement(statement, program, &procscope));
     }
     if (statements.size() < 1) {
       std::cerr << "Error: procedure body of \"" << decl.procedure_name << "\" has no statements" << std::endl;
@@ -271,15 +326,15 @@ class Typer {
     }));
   }
 
-  std::unique_ptr<TypedExternFunctionDeclarationAST> TypeExternFunctionDeclaration(const ExternFunctionDeclarationAST& decl, const TypedProgramAST& program) const {
+  std::unique_ptr<TypedExternFunctionDeclarationAST> TypeExternFunctionDeclaration(const ExternFunctionDeclarationAST& decl, const TypedProgramAST& program, const VariableScope* parent_scope) const {
     if (is_iotype(decl.function_return_type)) {
       std::cerr << "Error: function \"" << decl.function_name << "\" returns a procedure IO type: " << pretty_print_type(decl.function_return_type) << std::endl;
       assert(false);
     }
-    VariableScope scope;
+    VariableScope funcscope = parent_scope->create_nested_scope("extern-function(" + decl.function_name + ")");
     for (const auto& [name, type] : decl.parameters) {
-      scope.sources[name] = "extern function(" + decl.function_name + ")-param(" + name + "):" + pretty_print_type(type);
-      scope.types[name] = type;
+      auto sourcedesc = "extern-function(" + decl.function_name + ")-param(" + name + "):" + pretty_print_type(type);
+      funcscope.add(name, type, sourcedesc);
     }
     if (mode == Mode::Verbose) {
       std::cerr << "typing extern function declaration: " << decl.function_name << ": " << pretty_print_type(decl.function_return_type) << std::endl;
@@ -291,15 +346,15 @@ class Typer {
     }));
   }
 
-  std::unique_ptr<TypedExternProcedureDeclarationAST> TypeExternProcedureDeclaration(const ExternProcedureDeclarationAST& decl, const TypedProgramAST& program) const {
+  std::unique_ptr<TypedExternProcedureDeclarationAST> TypeExternProcedureDeclaration(const ExternProcedureDeclarationAST& decl, const TypedProgramAST& program, const VariableScope* parent_scope) const {
     if (!is_iotype(decl.procedure_return_type)) {
       std::cerr << "Error: procedure \"" << decl.procedure_name << "\" returns a function non-IO type: " << pretty_print_type(decl.procedure_return_type) << std::endl;
       assert(false);
     }
-    VariableScope scope;
+    VariableScope procscope = parent_scope->create_nested_scope("extern-procedure(" + decl.procedure_name + ")");
     for (const auto& [name, type] : decl.parameters) {
-      scope.sources[name] = "extern procedure(" + decl.procedure_name + ")-param(" + name + "):" + pretty_print_type(type);
-      scope.types[name] = type;
+      auto sourcedesc = "extern-procedure(" + decl.procedure_name + ")-param(" + name + "):" + pretty_print_type(type);
+      procscope.add(name, type, sourcedesc);
     }
     if (mode == Mode::Verbose) {
       std::cerr << "typing extern procedure declaration: " << decl.procedure_name << ": " << pretty_print_type(decl.procedure_return_type) << std::endl;
@@ -318,6 +373,9 @@ class Typer {
                           },
                           [&](const DefineStatementAST& def) {
                             return TypedFunctionBodyStatementAST(TypeDefineStatement(def, program, scope));
+                          },
+                          [&](const FunctionDeclarationAST& decl) {
+                            return TypedFunctionBodyStatementAST(TypeFunctionDeclaration(decl, program, scope));
                           },
                       },
                       *ast.get());
@@ -338,7 +396,7 @@ class Typer {
                       *ast.get());
   }
 
-  std::unique_ptr<TypedReturnStatementAST> TypeReturnStatement(const ReturnStatementAST& ret, const TypedProgramAST& program, VariableScope* scope) const {
+  std::unique_ptr<TypedReturnStatementAST> TypeReturnStatement(const ReturnStatementAST& ret, const TypedProgramAST& program, const VariableScope* scope) const {
     auto expr = TypeExpression(ret.return_value, program, scope);
     auto type = expr.type;
     if (mode == Mode::Verbose) {
@@ -348,21 +406,17 @@ class Typer {
   }
 
   std::unique_ptr<TypedDefineStatementAST> TypeDefineStatement(const DefineStatementAST& def, const TypedProgramAST& program, VariableScope* scope) const {
-    if (scope->types.find(def.name) != scope->types.end()) {
-      std::cerr << "Error: variable \"" << def.name << "\" already exists" << std::endl;
-      assert(false);
-    }
     auto expr = TypeExpression(def.value, program, scope);
     auto type = expr.type;
-    scope->sources[def.name] = "define(" + def.name + "):" + pretty_print_type(type);
-    scope->types[def.name] = type;
+    auto sourcedesc = "define(" + def.name + "):" + pretty_print_type(type);
+    scope->add(def.name, type, sourcedesc);
     if (mode == Mode::Verbose) {
       std::cerr << "typing define statement: " << pretty_print_type(type) << std::endl;
     }
     return std::make_unique<TypedDefineStatementAST>(TypedDefineStatementAST({def.name, std::move(expr), type}));
   }
 
-  std::unique_ptr<TypedRunStatementAST> TypeRunStatement(const RunStatementAST& run, const TypedProgramAST& program, VariableScope* scope) const {
+  std::unique_ptr<TypedRunStatementAST> TypeRunStatement(const RunStatementAST& run, const TypedProgramAST& program, const VariableScope* scope) const {
     std::vector<TypedExpressionAST> expressions;
     for (const auto& expr : run.expressions) {
       expressions.emplace_back(TypeExpression(expr, program, scope));
@@ -373,7 +427,7 @@ class Typer {
     return std::make_unique<TypedRunStatementAST>(TypedRunStatementAST({std::move(expressions)}));
   }
 
-  TypedExpressionAST TypeExpression(const std::unique_ptr<ExpressionAST>& ast, const TypedProgramAST& program, VariableScope* scope) const {
+  TypedExpressionAST TypeExpression(const std::unique_ptr<ExpressionAST>& ast, const TypedProgramAST& program, const VariableScope* scope) const {
     return std::visit(overloaded{
                           [&](const ExpressionVariableAST& var) {
                             auto expr = TypeVariableExpression(var, program, scope);
@@ -409,17 +463,17 @@ class Typer {
                       *ast.get());
   }
 
-  std::unique_ptr<TypedExpressionVariableAST> TypeVariableExpression(const ExpressionVariableAST& var, const TypedProgramAST& program, VariableScope* scope) const {
+  std::unique_ptr<TypedExpressionVariableAST> TypeVariableExpression(const ExpressionVariableAST& var, const TypedProgramAST& program, const VariableScope* scope) const {
     if (mode == Mode::Verbose) {
-      std::cerr << "typing variable: \"" << var.variable_name << "\", variable lookup: " << scope->sources[var.variable_name] << std::endl;
+      std::cerr << "typing variable: \"" << var.variable_name << "\"" << std::endl;
     }
-    if (scope->types.find(var.variable_name) == scope->types.end()) {
+    auto maybe_value = scope->lookup(var.variable_name);
+    if (!maybe_value.has_value()) {
       std::cerr << "Error: variable \"" << var.variable_name << "\" not in scope" << std::endl;
       assert(false);
     }
-    auto source = scope->sources[var.variable_name];
-    auto type = scope->types[var.variable_name];
-    return std::make_unique<TypedExpressionVariableAST>(TypedExpressionVariableAST({var.variable_name, source, type}));
+    auto type = maybe_value.value();
+    return std::make_unique<TypedExpressionVariableAST>(TypedExpressionVariableAST({var.variable_name, type}));
   }
 
   std::optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>> lookup_function(const std::string& function_name, const TypedProgramAST& program) const {
@@ -462,7 +516,7 @@ class Typer {
     return std::nullopt;
   }
 
-  std::unique_ptr<TypedExpressionFunctionCallAST> TypeFunctionCallExpression(const ExpressionFunctionCallAST& call, const TypedProgramAST& program, VariableScope* scope) const {
+  std::unique_ptr<TypedExpressionFunctionCallAST> TypeFunctionCallExpression(const ExpressionFunctionCallAST& call, const TypedProgramAST& program, const VariableScope* scope) const {
     if (mode == Mode::Verbose) {
       std::cerr << "typing function call: " << call.function_name << std::endl;
     }
@@ -504,7 +558,7 @@ class Typer {
     }));
   }
 
-  std::unique_ptr<TypedExpressionProcedureCallAST> TypeProcedureCallExpression(const ExpressionProcedureCallAST& call, const TypedProgramAST& program, VariableScope* scope) const {
+  std::unique_ptr<TypedExpressionProcedureCallAST> TypeProcedureCallExpression(const ExpressionProcedureCallAST& call, const TypedProgramAST& program, const VariableScope* scope) const {
     if (mode == Mode::Verbose) {
       std::cerr << "typing procedure call: " << call.procedure_name << std::endl;
     }
@@ -546,21 +600,21 @@ class Typer {
     }));
   }
 
-  std::unique_ptr<TypedExpressionNumberAST> TypeNumberExpression(const ExpressionNumberAST& number, const TypedProgramAST& program, VariableScope* scope) const {
+  std::unique_ptr<TypedExpressionNumberAST> TypeNumberExpression(const ExpressionNumberAST& number, const TypedProgramAST& program, const VariableScope* scope) const {
     if (mode == Mode::Verbose) {
       std::cerr << "typing number: " << number.number_string << ": " << pretty_print_type(number.number_type) << std::endl;
     }
     return std::make_unique<TypedExpressionNumberAST>(TypedExpressionNumberAST({number.number_string, number.number_type}));
   }
 
-  std::unique_ptr<TypedExpressionTruthValueAST> TypeTruthValueExpression(const ExpressionTruthValueAST& truth_value, const TypedProgramAST& program, VariableScope* scope) const {
+  std::unique_ptr<TypedExpressionTruthValueAST> TypeTruthValueExpression(const ExpressionTruthValueAST& truth_value, const TypedProgramAST& program, const VariableScope* scope) const {
     if (mode == Mode::Verbose) {
       std::cerr << "typing truth value: " << truth_value.truth_value << std::endl;
     }
     return std::make_unique<TypedExpressionTruthValueAST>(TypedExpressionTruthValueAST({truth_value.truth_value, TruthValueType{}}));
   }
 
-  std::unique_ptr<TypedExpressionIfThenElseAST> TypeIfThenElseExpression(const ExpressionIfThenElseAST& ifthenelse, const TypedProgramAST& program, VariableScope* scope) const {
+  std::unique_ptr<TypedExpressionIfThenElseAST> TypeIfThenElseExpression(const ExpressionIfThenElseAST& ifthenelse, const TypedProgramAST& program, const VariableScope* scope) const {
     if (mode == Mode::Verbose) {
       std::cerr << "typing ifthenelse" << std::endl;
     }
@@ -587,20 +641,6 @@ class Typer {
   Typer(Mode mode) : mode(mode) {}
   const Mode mode;
 };
-
-std::string pretty_print_parameter_list(const ParameterList parameters) {
-  std::stringstream ss;
-  bool first_parameter = true;
-  for (const auto& [name, type] : parameters) {
-    if (first_parameter) {
-      first_parameter = false;
-    } else {
-      ss << ", ";
-    }
-    ss << name << ": " << pretty_print_type(type);
-  }
-  return ss.str();
-}
 
 std::string pretty_print_typed_function_declaration_header(const TypedFunctionDeclarationAST& decl) {
   return decl.function_name + "(" + pretty_print_parameter_list(decl.parameters) + "): " + pretty_print_type(decl.function_return_type);

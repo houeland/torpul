@@ -39,13 +39,24 @@ bool operator==(const TruthValueType& a, const TruthValueType& b) {
 }
 
 struct IoType;
+struct FunctionType;
 
-// TODO: remove monostate; it's not supported, just there to catch default-initialization errors
-using TypeAST = std::variant<std::monostate, BuiltInNumberType, TruthValueType, UserDefinedType, IoType>;
+// Note: monostate is not actually supported, it's just there to catch any default-initialization errors
+using TypeAST = std::variant<std::monostate, BuiltInNumberType, TruthValueType, UserDefinedType, IoType, FunctionType>;
 
 struct IoType {
   std::shared_ptr<TypeAST> base_type;
 };
+
+struct FunctionType {
+  std::map<std::string, TypeAST> parameters;
+  std::shared_ptr<TypeAST> return_type;
+};
+
+bool operator==(const FunctionType& a, const FunctionType& b) {
+  // For now, try having function types always compare unequal
+  return false;
+}
 
 bool operator==(const IoType& a, const IoType& b) {
   return *a.base_type == *b.base_type;
@@ -53,6 +64,11 @@ bool operator==(const IoType& a, const IoType& b) {
 
 bool is_iotype(const TypeAST& ast) {
   const auto* maybe_io = std::get_if<IoType>(&ast);
+  return maybe_io != nullptr;
+}
+
+bool is_functiontype(const TypeAST& ast) {
+  const auto* maybe_io = std::get_if<FunctionType>(&ast);
   return maybe_io != nullptr;
 }
 
@@ -75,14 +91,16 @@ struct ExpressionIfThenElseAST;
 
 using ExpressionAST = std::variant<ExpressionNumberAST, ExpressionTruthValueAST, ExpressionVariableAST, ExpressionFunctionCallAST, ExpressionProcedureCallAST, ExpressionIfThenElseAST>;
 
+using ArgumentList = std::map<std::string, std::unique_ptr<ExpressionAST>>;
+
 struct ExpressionFunctionCallAST {
   std::string function_name;
-  std::map<std::string, std::unique_ptr<ExpressionAST>> arguments;
+  ArgumentList arguments;
 };
 
 struct ExpressionProcedureCallAST {
   std::string procedure_name;
-  std::map<std::string, std::unique_ptr<ExpressionAST>> arguments;
+  ArgumentList arguments;
 };
 
 struct ExpressionIfThenElseAST {
@@ -104,36 +122,40 @@ struct RunStatementAST {
   std::vector<std::unique_ptr<ExpressionAST>> expressions;
 };
 
-using FunctionBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST>;
+struct FunctionDeclarationAST;
+
+using FunctionBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST, FunctionDeclarationAST>;
 using ProcedureBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST, RunStatementAST>;
+
+using ParameterList = std::map<std::string, TypeAST>;
 
 struct FunctionDeclarationAST {
   std::string function_name;
   TypeAST function_return_type;
-  std::map<std::string, TypeAST> parameters;
+  ParameterList parameters;
   std::vector<std::unique_ptr<FunctionBodyStatementAST>> statements;
 };
 
 struct ProcedureDeclarationAST {
   std::string procedure_name;
   TypeAST procedure_return_type;
-  std::map<std::string, TypeAST> parameters;
+  ParameterList parameters;
   std::vector<std::unique_ptr<ProcedureBodyStatementAST>> statements;
 };
 
 struct ExternFunctionDeclarationAST {
   std::string function_name;
   TypeAST function_return_type;
-  std::map<std::string, TypeAST> parameters;
+  ParameterList parameters;
 };
 
 struct ExternProcedureDeclarationAST {
   std::string procedure_name;
   TypeAST procedure_return_type;
-  std::map<std::string, TypeAST> parameters;
+  ParameterList parameters;
 };
 
-using TopLevelStatementAST = std::variant<FunctionDeclarationAST, ProcedureDeclarationAST, ExternProcedureDeclarationAST, ExternFunctionDeclarationAST>;
+using TopLevelStatementAST = std::variant<FunctionDeclarationAST, DefineStatementAST, ProcedureDeclarationAST, ExternProcedureDeclarationAST, ExternFunctionDeclarationAST>;
 
 struct ProgramAST {
   std::vector<std::unique_ptr<TopLevelStatementAST>> statements;
@@ -172,15 +194,15 @@ class Parser {
     consume(Token::term_call);
     const std::string name = consume_identifier();
     consume(Token::open_paren);
-    std::map<std::string, std::unique_ptr<ExpressionAST>> parameters;
+    ArgumentList arguments;
     while (last_token != Token::close_paren) {
       const std::string param_name = consume_identifier();
-      if (parameters.count(param_name)) {
+      if (arguments.count(param_name)) {
         fail_unexpected("Repeated parameter name: ");
       }
       consume(Token::equals);
       std::unique_ptr<ExpressionAST> param_value = ParseExpression();
-      parameters.insert(std::make_pair(param_name, std::move(param_value)));
+      arguments.insert(std::make_pair(param_name, std::move(param_value)));
       if (last_token == Token::comma) {
         consume(Token::comma);
         continue;
@@ -192,22 +214,22 @@ class Parser {
     if (mode == Mode::Verbose) {
       std::cerr << "parsed ExpressionFunctionCallAST: " << name << std::endl;
     }
-    return {name, std::move(parameters)};
+    return {name, std::move(arguments)};
   }
 
   ExpressionProcedureCallAST ParseProcedureCallExpression() {
     consume(Token::term_callproc);
     const std::string name = consume_identifier();
     consume(Token::open_paren);
-    std::map<std::string, std::unique_ptr<ExpressionAST>> parameters;
+    ArgumentList arguments;
     while (last_token != Token::close_paren) {
       const std::string param_name = consume_identifier();
-      if (parameters.count(param_name)) {
+      if (arguments.count(param_name)) {
         fail_unexpected("Repeated parameter name: ");
       }
       consume(Token::equals);
       std::unique_ptr<ExpressionAST> param_value = ParseExpression();
-      parameters.insert(std::make_pair(param_name, std::move(param_value)));
+      arguments.insert(std::make_pair(param_name, std::move(param_value)));
       if (last_token == Token::comma) {
         consume(Token::comma);
         continue;
@@ -219,7 +241,7 @@ class Parser {
     if (mode == Mode::Verbose) {
       std::cerr << "parsed ExpressionProcedureCallAST: " << name << std::endl;
     }
-    return {name, std::move(parameters)};
+    return {name, std::move(arguments)};
   }
 
   ExpressionNumberAST ParseNumberExpression() {
@@ -343,6 +365,8 @@ class Parser {
         return make_unique<FunctionBodyStatementAST>(FunctionBodyStatementAST({ParseReturnStatement()}));
       case Token::term_define:
         return make_unique<FunctionBodyStatementAST>(FunctionBodyStatementAST({ParseDefineStatement()}));
+      case Token::term_function:
+        return make_unique<FunctionBodyStatementAST>(FunctionBodyStatementAST({ParseFunctionDeclaration()}));
       default:
         fail_unexpected("Expected function body statement but found: ");
     }
@@ -365,7 +389,7 @@ class Parser {
     consume(Token::term_function);
     const std::string function_name = consume_identifier();
     consume(Token::open_paren);
-    std::map<std::string, TypeAST> parameters;
+    ParameterList parameters;
     while (last_token == Token::identifier_string) {
       const std::string param_name = consume_identifier();
       consume(Token::colon);
@@ -404,7 +428,7 @@ class Parser {
     consume(Token::term_procedure);
     const std::string procedure_name = consume_identifier();
     consume(Token::open_paren);
-    std::map<std::string, TypeAST> parameters;
+    ParameterList parameters;
     while (last_token == Token::identifier_string) {
       const std::string param_name = consume_identifier();
       consume(Token::colon);
@@ -450,7 +474,7 @@ class Parser {
     }
     const std::string extern_name = consume_identifier();
     consume(Token::open_paren);
-    std::map<std::string, TypeAST> parameters;
+    ParameterList parameters;
     while (last_token == Token::identifier_string) {
       const std::string param_name = consume_identifier();
       consume(Token::colon);
@@ -493,6 +517,8 @@ class Parser {
     switch (last_token) {
       case Token::term_function:
         return std::make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseFunctionDeclaration()}));
+      case Token::term_define:
+        return std::make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseDefineStatement()}));
       case Token::term_procedure:
         return std::make_unique<TopLevelStatementAST>(TopLevelStatementAST({ParseProcedureDeclaration()}));
       case Token::term_extern:

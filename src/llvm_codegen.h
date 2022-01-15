@@ -110,6 +110,10 @@ class LlvmCodegen {
     auto old_indent = indent_prefix;
     indent_prefix += ">> ";
     auto* function = std::visit(overloaded{
+                                    [&](const std::unique_ptr<TypedDefineStatementAST>& decl) {
+                                      assert(!"codegen not implemented yet: top-level TypedDefineStatementAST");
+                                      return static_cast<llvm::Function*>(nullptr);
+                                    },
                                     [&](const std::unique_ptr<TypedFunctionDeclarationAST>& decl) {
                                       if (mode == Mode::Verbose) {
                                         std::cerr << indent_prefix << "compiling function: " << pretty_print_typed_function_declaration_header(*decl) << std::endl;
@@ -137,7 +141,9 @@ class LlvmCodegen {
                                                        [&](const std::unique_ptr<TypedDefineStatementAST>& def) {
                                                          variable_lookup[def->name] = codegen_value(def->value, llvm_context, llvm_module, program, builder, variable_lookup, "func_define_" + def->name + "_");
                                                        },
-                                                   },
+                                                       [&](const std::unique_ptr<TypedFunctionDeclarationAST>& decl) {
+                                                         assert(!"codegen: nested function declarations not implemented");
+                                                       }},
                                                    statement);
                                       }
 
@@ -241,7 +247,8 @@ class LlvmCodegen {
                                       std::cerr << std::endl;
                                       return static_cast<llvm::Function*>(llvm_function);
                                     },
-                                },
+                                }  // namespace torpul
+                                ,
                                 ast);
     indent_prefix = old_indent;
     return function;

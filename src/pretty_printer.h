@@ -12,6 +12,9 @@ namespace {
 
 std::string pretty_print_type(const TypeAST& ast) {
   return std::visit(overloaded{
+                        [](const FunctionType& t) {
+                          return std::string("Function<... " + pretty_print_type(*t.return_type) + ">");
+                        },
                         [](const IoType& t) {
                           return std::string("IO<") + pretty_print_type(*t.base_type) + std::string(">");
                         },
@@ -99,6 +102,36 @@ std::string pretty_print_expression(const std::unique_ptr<ExpressionAST>& ast) {
                     *ast.get());
 }
 
+std::string pretty_print_parameter_list(const ParameterList parameters) {
+  std::stringstream ss;
+  bool first_parameter = true;
+  for (const auto& [name, type] : parameters) {
+    if (first_parameter) {
+      first_parameter = false;
+    } else {
+      ss << ", ";
+    }
+    ss << name << ": " << pretty_print_type(type);
+  }
+  return ss.str();
+}
+
+std::string pretty_print_function_declaration_header(const FunctionDeclarationAST& decl) {
+  return decl.function_name + "(" + pretty_print_parameter_list(decl.parameters) + "): " + pretty_print_type(decl.function_return_type);
+}
+
+std::string pretty_print_extern_function_declaration_header(const ExternFunctionDeclarationAST& decl) {
+  return decl.function_name + "(" + pretty_print_parameter_list(decl.parameters) + "): " + pretty_print_type(decl.function_return_type);
+}
+
+std::string pretty_print_procedure_declaration_header(const ProcedureDeclarationAST& decl) {
+  return decl.procedure_name + "(" + pretty_print_parameter_list(decl.parameters) + "): " + pretty_print_type(decl.procedure_return_type);
+}
+
+std::string pretty_print_extern_procedure_declaration_header(const ExternProcedureDeclarationAST& decl) {
+  return decl.procedure_name + "(" + pretty_print_parameter_list(decl.parameters) + "): " + pretty_print_type(decl.procedure_return_type);
+}
+
 void pretty_print_function_body_statement(const std::unique_ptr<FunctionBodyStatementAST>& ast) {
   std::visit(overloaded{
                  [](const ReturnStatementAST& ret) {
@@ -106,6 +139,14 @@ void pretty_print_function_body_statement(const std::unique_ptr<FunctionBodyStat
                  },
                  [](const DefineStatementAST& def) {
                    std::cout << "  define " << def.name << " as " << pretty_print_expression(def.value) << std::endl;
+                 },
+                 [](const FunctionDeclarationAST& decl) {
+                   std::cout << "  function " << pretty_print_function_declaration_header(decl) << std::endl;
+                   for (const auto& statement : decl.statements) {
+                     std::cout << "  ";
+                     pretty_print_function_body_statement(statement);
+                   }
+                   std::cout << "  endfunction" << std::endl;
                  },
              },
              *ast.get());
@@ -130,70 +171,6 @@ void pretty_print_procedure_body_statement(const std::unique_ptr<ProcedureBodySt
              *ast.get());
 }
 
-std::string pretty_print_function_declaration_header(const FunctionDeclarationAST& decl) {
-  std::stringstream ss;
-  ss << decl.function_name << "(";
-  bool first_parameter = true;
-  for (const auto& [name, type] : decl.parameters) {
-    if (first_parameter) {
-      first_parameter = false;
-    } else {
-      ss << ", ";
-    }
-    ss << name << ": " << pretty_print_type(type);
-  }
-  ss << "): " << pretty_print_type(decl.function_return_type);
-  return ss.str();
-}
-
-std::string pretty_print_procedure_declaration_header(const ProcedureDeclarationAST& decl) {
-  std::stringstream ss;
-  ss << decl.procedure_name << "(";
-  bool first_parameter = true;
-  for (const auto& [name, type] : decl.parameters) {
-    if (first_parameter) {
-      first_parameter = false;
-    } else {
-      ss << ", ";
-    }
-    ss << name << ": " << pretty_print_type(type);
-  }
-  ss << "): " << pretty_print_type(decl.procedure_return_type);
-  return ss.str();
-}
-
-std::string pretty_print_extern_function_declaration_header(const ExternFunctionDeclarationAST& decl) {
-  std::stringstream ss;
-  ss << decl.function_name << "(";
-  bool first_parameter = true;
-  for (const auto& [name, type] : decl.parameters) {
-    if (first_parameter) {
-      first_parameter = false;
-    } else {
-      ss << ", ";
-    }
-    ss << name << ": " << pretty_print_type(type);
-  }
-  ss << "): " << pretty_print_type(decl.function_return_type);
-  return ss.str();
-}
-
-std::string pretty_print_extern_procedure_declaration_header(const ExternProcedureDeclarationAST& decl) {
-  std::stringstream ss;
-  ss << decl.procedure_name << "(";
-  bool first_parameter = true;
-  for (const auto& [name, type] : decl.parameters) {
-    if (first_parameter) {
-      first_parameter = false;
-    } else {
-      ss << ", ";
-    }
-    ss << name << ": " << pretty_print_type(type);
-  }
-  ss << "): " << pretty_print_type(decl.procedure_return_type);
-  return ss.str();
-}
-
 void pretty_print_top_level_statement(const std::unique_ptr<TopLevelStatementAST>& ast) {
   std::visit(overloaded{
                  [](const FunctionDeclarationAST& decl) {
@@ -202,6 +179,9 @@ void pretty_print_top_level_statement(const std::unique_ptr<TopLevelStatementAST
                      pretty_print_function_body_statement(statement);
                    }
                    std::cout << "endfunction" << std::endl;
+                 },
+                 [](const DefineStatementAST& def) {
+                   std::cout << "define " << def.name << " as " << pretty_print_expression(def.value) << std::endl;
                  },
                  [](const ProcedureDeclarationAST& decl) {
                    std::cout << "procedure " << pretty_print_procedure_declaration_header(decl) << std::endl;
