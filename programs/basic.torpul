@@ -28,39 +28,11 @@ function Complicated(x: Integer, y: Float256): Integer
   endif
 endfunction
 
-procedure ConditionalExecution(x: Float256): IO<Integer>
-  define thisshouldnotprint as callproc Print256(value=x)
-  run
-    do if call GreaterThan(bigger=x, smaller=10.0f256) then
-      callproc Print(value=10)
-    else
-      callproc DoNothing()
-    endif
-    do if call GreaterThan(bigger=x, smaller=100.0f256) then
-      callproc Print(value=100)
-    else
-      callproc DoNothing()
-    endif
-    do if call GreaterThan(bigger=x, smaller=1000.0f256) then
-      callproc Print(value=1000)
-    else
-      callproc DoNothing()
-    endif
-  endrun
-  return 0
-endprocedure
-
 procedure Main(): IO<Integer>
   run
     do callproc Print(value=call Complicated(x=17, y=150.0f256))
     do callproc Print(value=call Complicated(x=17, y=15.0f256))
     do callproc Print(value=call Complicated(x=19, y=150.0f256))
-  endrun
-  run
-    do callproc ConditionalExecution(x=5.0f256)
-    do callproc ConditionalExecution(x=50.0f256)
-    do callproc ConditionalExecution(x=500.0f256)
-    do callproc ConditionalExecution(x=5000.0f256)
   endrun
   return 0
 endprocedure

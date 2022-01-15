@@ -79,6 +79,10 @@ class LlvmCodegen {
       codegen_function(statement, program, llvm_context, llvm_module);
     }
 
+    std::cerr << "Populated LLVM module:" << std::endl;
+    llvm_module->print(llvm::errs(), nullptr);
+    std::cerr << std::endl;
+
     std::string output_filename = "build/output.o";
     std::error_code write_error_code;
     llvm::raw_fd_ostream dest(output_filename, write_error_code, llvm::sys::fs::OF_None);
@@ -127,11 +131,11 @@ class LlvmCodegen {
                                       for (const auto& statement : decl->statements) {
                                         std::visit(overloaded{
                                                        [&](const std::unique_ptr<TypedReturnStatementAST>& ret) {
-                                                         auto* retval = codegen_value(ret->return_value, llvm_context, llvm_module, program, builder, variable_lookup);
+                                                         auto* retval = codegen_value(ret->return_value, llvm_context, llvm_module, program, builder, variable_lookup, "func_return_");
                                                          builder->CreateRet(retval);
                                                        },
                                                        [&](const std::unique_ptr<TypedDefineStatementAST>& def) {
-                                                         variable_lookup[def->name] = codegen_value(def->value, llvm_context, llvm_module, program, builder, variable_lookup);
+                                                         variable_lookup[def->name] = codegen_value(def->value, llvm_context, llvm_module, program, builder, variable_lookup, "func_define_" + def->name + "_");
                                                        },
                                                    },
                                                    statement);
@@ -191,11 +195,11 @@ class LlvmCodegen {
                                       for (const auto& statement : decl->statements) {
                                         std::visit(overloaded{
                                                        [&](const std::unique_ptr<TypedReturnStatementAST>& ret) {
-                                                         auto* retval = codegen_value(ret->return_value, llvm_context, llvm_module, program, builder, variable_lookup);
+                                                         auto* retval = codegen_value(ret->return_value, llvm_context, llvm_module, program, builder, variable_lookup, "proc_return_");
                                                          builder->CreateRet(retval);
                                                        },
                                                        [&](const std::unique_ptr<TypedDefineStatementAST>& def) {
-                                                         variable_lookup[def->name] = codegen_value(def->value, llvm_context, llvm_module, program, builder, variable_lookup);
+                                                         variable_lookup[def->name] = codegen_value(def->value, llvm_context, llvm_module, program, builder, variable_lookup, "proc_define_" + def->name + "_");
                                                        },
                                                        [&](const std::unique_ptr<TypedRunStatementAST>& run) {
                                                          codegen_runstatement(run, llvm_context, llvm_module, program, builder, variable_lookup);
@@ -243,9 +247,11 @@ class LlvmCodegen {
     return function;
   }
 
-  llvm::Value* codegen_value(const TypedExpressionAST& ast, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module, const TypedProgramAST& program, std::unique_ptr<llvm::IRBuilder<>>& builder, std::map<std::string, llvm::Value*>& variable_lookup) {
+  llvm::Value* codegen_value(const TypedExpressionAST& ast, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module, const TypedProgramAST& program, std::unique_ptr<llvm::IRBuilder<>>& builder, std::map<std::string, llvm::Value*>& variable_lookup, std::string name_prefix) {
     auto old_indent = indent_prefix;
     indent_prefix += "  ";
+    // const int rndval = rand();
+    // std::cerr << "codegen_value start(" << rndval << ")" << std::endl;
     auto* value = std::visit(overloaded{
                                  [&](const std::unique_ptr<TypedExpressionNumberAST>& decl) {
                                    if (mode == Mode::Verbose) {
@@ -282,39 +288,31 @@ class LlvmCodegen {
                                      std::cerr << indent_prefix << "compiling function call: " << decl->function_name << std::endl;
                                    }
                                    auto* func = llvm_module->getFunction(decl->function_name);
-                                   if (!func) {
-                                     const auto* function_decl = program.declared_functions.find(decl->function_name)->second;
-                                     func = make_function(*function_decl, llvm_context, llvm_module);
-                                   }
+                                   assert(func);
+                                   //  if (!func) {
+                                   //    // Only needed for JIT execution?
+                                   //    const auto* function_decl = program.declared_functions.find(decl->function_name)->second;
+                                   //    func = make_function(*function_decl, llvm_context, llvm_module);
+                                   //  }
                                    std::vector<llvm::Value*> argvalues;
                                    for (const auto& [name, argument_ast] : decl->parameter_values) {
-                                     auto* value = codegen_value(argument_ast, llvm_context, llvm_module, program, builder, variable_lookup);
+                                     auto* value = codegen_value(argument_ast, llvm_context, llvm_module, program, builder, variable_lookup, "call_arg_" + name + "_");
                                      argvalues.push_back(value);
                                    }
-                                   return static_cast<llvm::Value*>(builder->CreateCall(func, argvalues, "call_" + decl->function_name + "_result"));
+                                   return static_cast<llvm::Value*>(builder->CreateCall(func, argvalues, name_prefix + "call_" + decl->function_name + "_result"));
                                  },
                                  [&](const std::unique_ptr<TypedExpressionProcedureCallAST>& decl) {
-                                   if (mode == Mode::Verbose) {
-                                     std::cerr << indent_prefix << "compiling procedure call: " << decl->procedure_name << std::endl;
-                                   }
-                                   auto* proc = llvm_module->getFunction(decl->procedure_name);
-                                   if (!proc) {
-                                     const auto* procedure_decl = program.declared_functions.find(decl->procedure_name)->second;
-                                     proc = make_function(*procedure_decl, llvm_context, llvm_module);
-                                   }
-                                   std::vector<llvm::Value*> argvalues;
-                                   for (const auto& [name, argument_ast] : decl->parameter_values) {
-                                     auto* value = codegen_value(argument_ast, llvm_context, llvm_module, program, builder, variable_lookup);
-                                     argvalues.push_back(value);
-                                   }
-                                   // TODO: Don't do the call!
-                                   return static_cast<llvm::Value*>(builder->CreateCall(proc, argvalues, "callproc_" + decl->procedure_name + "_result"));
+                                   //  assert(!"Unexpected: codegen_value called for TypedExpressionProcedureCallAST!");
+                                   //  return static_cast<llvm::Value*>(nullptr);
+                                   // TODO: revisit and handle closures
+                                   codegen_rundo(ast, llvm_context, llvm_module, program, builder, variable_lookup, name_prefix);
+                                   return static_cast<llvm::Value*>(llvm::ConstantFP::get(llvm_context, llvm::APFloat(-45.6)));
                                  },
                                  [&](const std::unique_ptr<TypedExpressionIfThenElseAST>& decl) {
                                    if (mode == Mode::Verbose) {
                                      std::cerr << indent_prefix << "compiling if-then-else" << std::endl;
                                    }
-                                   auto* raw_condition = codegen_value(decl->condition, llvm_context, llvm_module, program, builder, variable_lookup);
+                                   auto* raw_condition = codegen_value(decl->condition, llvm_context, llvm_module, program, builder, variable_lookup, "if_cond_");
                                    auto* condition = builder->CreateFCmpONE(raw_condition, llvm::ConstantFP::get(llvm_context, llvm::APFloat(0.0)), "if_condition");
 
                                    auto* current_parent_function = builder->GetInsertBlock()->getParent();
@@ -326,16 +324,16 @@ class LlvmCodegen {
                                    builder->CreateCondBr(condition, then_bb, else_bb);
 
                                    builder->SetInsertPoint(then_bb);
-                                   auto* then_value = codegen_value(decl->then_clause, llvm_context, llvm_module, program, builder, variable_lookup);
+                                   auto* then_value = codegen_value(decl->then_clause, llvm_context, llvm_module, program, builder, variable_lookup, "if_then_");
                                    builder->CreateBr(endif_bb);
 
                                    builder->SetInsertPoint(else_bb);
-                                   auto* else_value = codegen_value(decl->else_clause, llvm_context, llvm_module, program, builder, variable_lookup);
+                                   auto* else_value = codegen_value(decl->else_clause, llvm_context, llvm_module, program, builder, variable_lookup, "if_else_");
                                    builder->CreateBr(endif_bb);
 
                                    builder->SetInsertPoint(endif_bb);
 
-                                   auto* endif_phi = builder->CreatePHI(llvm::Type::getDoubleTy(llvm_context), 2, "endif_phi");
+                                   auto* endif_phi = builder->CreatePHI(then_value->getType(), 2, "endif_phi");
                                    endif_phi->addIncoming(then_value, then_bb);
                                    endif_phi->addIncoming(else_value, else_bb);
 
@@ -343,17 +341,115 @@ class LlvmCodegen {
                                  },
                              },
                              ast.value);
+    // std::cerr << "codegen_value done(" << rndval << "): " << value << std::endl;
+    // std::cerr << "  isa value" << llvm::isa<llvm::Value>(value) << std::endl;
+    // std::cerr << "  isa function" << llvm::isa<llvm::Function>(value) << std::endl;
     indent_prefix = old_indent;
     return value;
   }
 
+  void codegen_rundo(const TypedExpressionAST& ast, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module, const TypedProgramAST& program, std::unique_ptr<llvm::IRBuilder<>>& builder, std::map<std::string, llvm::Value*>& variable_lookup, std::string name_prefix) {
+    auto old_indent = indent_prefix;
+    indent_prefix += "  ";
+    // const int rndval = rand();
+    // std::cerr << "codegen_value start(" << rndval << ")" << std::endl;
+    std::visit(overloaded{
+                   [&](const std::unique_ptr<TypedExpressionNumberAST>& decl) {
+                     assert(!"Unexpected: codegen_rundo called for TypedExpressionNumberAST!");
+                   },
+                   [&](const std::unique_ptr<TypedExpressionTruthValueAST>& decl) {
+                     assert(!"Unexpected: codegen_rundo called for TypedExpressionTruthValueAST!");
+                   },
+                   [&](const std::unique_ptr<TypedExpressionVariableAST>& decl) {
+                     assert(!"Unexpected: codegen_rundo called for TypedExpressionVariableAST!");
+                   },
+                   [&](const std::unique_ptr<TypedExpressionFunctionCallAST>& decl) {
+                     assert(!"Unexpected: codegen_rundo called for TypedExpressionFunctionCallAST!");
+                   },
+                   [&](const std::unique_ptr<TypedExpressionProcedureCallAST>& decl) {
+                     if (mode == Mode::Verbose) {
+                       std::cerr << indent_prefix << "compiling procedure call: " << decl->procedure_name << std::endl;
+                     }
+                     auto* proc = llvm_module->getFunction(decl->procedure_name);
+                     assert(proc);
+                     //  if (!proc) {
+                     //    // Only needed for JIT execution?
+                     //    const auto* procedure_decl = program.declared_procedures.find(decl->procedure_name)->second;
+                     //    proc = make_procedure(*procedure_decl, llvm_context, llvm_module);
+                     //  }
+                     std::vector<llvm::Value*> argvalues;
+                     for (const auto& [name, argument_ast] : decl->parameter_values) {
+                       auto* value = codegen_value(argument_ast, llvm_context, llvm_module, program, builder, variable_lookup, "callproc_arg_" + name + "_");
+                       argvalues.push_back(value);
+                     }
+                     //  auto* callable = make_procedure_call_function(llvm_context, llvm_module);
+                     //  {
+                     //    llvm::IRBuilderBase::InsertPointGuard guard(*builder.get());
+                     //    auto* bb = llvm::BasicBlock::Create(llvm_context, "entry", callable);
+                     //    builder->SetInsertPoint(bb);
+                     //    //  auto* retval = builder->CreateCall(proc, argvalues, "callproc_" + decl->procedure_name + "_result");
+                     //    auto* retval = llvm::ConstantFP::get(llvm_context, llvm::APFloat(4.56));
+                     //    builder->CreateRet(retval);
+                     //  }
+                     //  std::cerr << "Defined callproc lambda callable:" << std::endl;
+                     //  callable->print(llvm::errs());
+                     //  std::cerr << std::endl;
+                     //  std::cerr << "made callable! " << callable << std::endl;
+                     //  std::cerr << "  isa value" << llvm::isa<llvm::Value>(callable) << std::endl;
+                     //  std::cerr << "  isa function" << llvm::isa<llvm::Function>(callable) << std::endl;
+                     //  return llvm::cast<llvm::Value>(callable);
+                     //  auto* val = callable;
+                     //  std::cerr << "val = " << val << std::endl;
+                     //  std::cerr << "  isa value" << llvm::isa<llvm::Value>(val) << std::endl;
+                     //  std::cerr << "  isa function" << llvm::isa<llvm::Function>(val) << std::endl;
+                     //  auto* valproc = llvm::cast<llvm::Function>(val);
+                     //  std::cerr << "valproc = " << valproc << std::endl;
+                     //  builder->CreateCall(valproc, std::vector<llvm::Value*>(), "callproc_lambda_result");
+                     //  std::cerr << "built the createcall!" << std::endl;
+                     builder->CreateCall(proc, argvalues, name_prefix + "callproc_" + decl->procedure_name + "_result");
+                   },
+                   [&](const std::unique_ptr<TypedExpressionIfThenElseAST>& decl) {
+                     assert(!"Unexpected: codegen_rundo called for TypedExpressionIfThenElseAST!");
+                   },
+               },
+               ast.value);
+    // std::cerr << "codegen_value done(" << rndval << "): " << value << std::endl;
+    // std::cerr << "  isa value" << llvm::isa<llvm::Value>(value) << std::endl;
+    // std::cerr << "  isa function" << llvm::isa<llvm::Function>(value) << std::endl;
+    indent_prefix = old_indent;
+  }
+
   void codegen_runstatement(const std::unique_ptr<TypedRunStatementAST>& run, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module, const TypedProgramAST& program, std::unique_ptr<llvm::IRBuilder<>>& builder, std::map<std::string, llvm::Value*>& variable_lookup) {
     for (const auto& do_statement : run->expressions) {
-      codegen_value(do_statement, llvm_context, llvm_module, program, builder, variable_lookup);
+      std::cerr << "codegen run statement" << std::endl;
+      codegen_rundo(do_statement, llvm_context, llvm_module, program, builder, variable_lookup, "proc_run_");
     }
   }
 
   llvm::Function* make_function(const TypedFunctionDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
+    // TODO: Support proper type representations rather than just doubles
+    std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
+    auto* function_type = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm_context), types, false);
+    auto* func = llvm::Function::Create(function_type, llvm::Function::ExternalLinkage, decl.function_name, llvm_module.get());
+
+    std::vector<std::string> param_names;
+    for (const auto& [name, type] : decl.parameters) {
+      param_names.push_back(name);
+    }
+    unsigned idx = 0;
+    for (auto& arg : func->args()) {
+      arg.setName(param_names[idx++]);
+    }
+
+    func->setWillReturn();
+    func->setNoSync();
+    func->setDoesNotThrow();
+    func->setDoesNotAccessMemory();
+    func->setSpeculatable();
+    return func;
+  }
+
+  llvm::Function* make_extern_function(const TypedExternFunctionDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
     // TODO: Support proper type representations rather than just doubles
     std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
     auto* function_type = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm_context), types, false);
@@ -396,28 +492,6 @@ class LlvmCodegen {
     func->setDoesNotAccessMemory();
     return func;
   }
-  llvm::Function* make_extern_function(const TypedExternFunctionDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
-    // TODO: Support proper type representations rather than just doubles
-    std::vector<llvm::Type*> types(decl.parameters.size(), llvm::Type::getDoubleTy(llvm_context));
-    auto* function_type = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm_context), types, false);
-    auto* func = llvm::Function::Create(function_type, llvm::Function::ExternalLinkage, decl.function_name, llvm_module.get());
-
-    std::vector<std::string> param_names;
-    for (const auto& [name, type] : decl.parameters) {
-      param_names.push_back(name);
-    }
-    unsigned idx = 0;
-    for (auto& arg : func->args()) {
-      arg.setName(param_names[idx++]);
-    }
-
-    func->setWillReturn();
-    func->setNoSync();
-    func->setDoesNotThrow();
-    func->setDoesNotAccessMemory();
-    func->setSpeculatable();
-    return func;
-  }
 
   llvm::Function* make_extern_procedure(const TypedExternProcedureDeclarationAST& decl, llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
     // TODO: Support proper type representations rather than just doubles
@@ -440,6 +514,15 @@ class LlvmCodegen {
     return func;
   }
 
+  llvm::Function* make_procedure_call_function(llvm::LLVMContext& llvm_context, std::unique_ptr<llvm::Module>& llvm_module) {
+    // TODO: Support proper type representations rather than just doubles
+    auto* function_type = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm_context), std::vector<llvm::Type*>(), false);
+    auto* func = llvm::Function::Create(function_type, llvm::Function::ExternalLinkage, "", llvm_module.get());
+    func->setNoSync();
+    func->setDoesNotThrow();
+    func->setDoesNotAccessMemory();
+    return func;
+  }
   LlvmCodegen(Mode mode) : mode(mode) {}
   const Mode mode;
   std::string indent_prefix = "";
