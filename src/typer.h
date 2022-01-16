@@ -84,6 +84,15 @@ struct TypedFunctionDeclarationAST {
   std::vector<TypedFunctionBodyStatementAST> statements;
 };
 
+TypeAST get_type_matching_function_declaration(const TypedFunctionDeclarationAST& ast) {
+  auto parameters = ast.parameters;
+  auto return_type = std::make_shared<TypeAST>(ast.function_return_type);
+  return FunctionType({
+      parameters,
+      return_type,
+  });
+}
+
 struct TypedExternFunctionDeclarationAST {
   std::string function_name;
   TypeAST function_return_type;
@@ -131,6 +140,7 @@ class VariableScope {
     }
     sources[name] = source;
     types[name] = type;
+    // std::cerr << "scope(" << description << ") add(" << name << ":" << pretty_print_type(type) << ") from " << source << std::endl;
   }
 
   std::optional<TypeAST> lookup(std::string name) const {
@@ -200,8 +210,8 @@ class Typer {
                           },
                           [&](const DefineStatementAST& def) {
                             auto typed = TypeDefineStatement(def, program, scope);
-                            auto sourcedesc = "top-level-define(" + typed->name + "):" + pretty_print_type(typed->returned_type);
-                            scope->add(typed->name, typed->returned_type, sourcedesc);
+                            // auto sourcedesc = "top-level-define(" + typed->name + "):" + pretty_print_type(typed->returned_type);
+                            // scope->add(typed->name, typed->returned_type, sourcedesc);
                             return TypedTopLevelStatementAST(std::move(typed));
                           },
                           [&](const ProcedureDeclarationAST& decl) {
@@ -375,7 +385,14 @@ class Typer {
                             return TypedFunctionBodyStatementAST(TypeDefineStatement(def, program, scope));
                           },
                           [&](const FunctionDeclarationAST& decl) {
-                            return TypedFunctionBodyStatementAST(TypeFunctionDeclaration(decl, program, scope));
+                            auto typed = TypeFunctionDeclaration(decl, program, scope);
+                            auto functype = get_type_matching_function_declaration(*typed);
+                            if (mode == Mode::Verbose) {
+                              std::cerr << "typing nested function declaration: " << typed->function_name << ": " << pretty_print_type(functype) << std::endl;
+                            }
+                            auto scopedesc = "nested-function(" + typed->function_name + ")";
+                            scope->add(typed->function_name, functype, scopedesc);
+                            return TypedFunctionBodyStatementAST(std::move(typed));
                           },
                       },
                       *ast.get());
@@ -476,7 +493,7 @@ class Typer {
     return std::make_unique<TypedExpressionVariableAST>(TypedExpressionVariableAST({var.variable_name, type}));
   }
 
-  std::optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>> lookup_function(const std::string& function_name, const TypedProgramAST& program) const {
+  std::optional<std::tuple<const std::string, const std::map<std::string, TypeAST>, TypeAST>> lookup_function(const std::string& function_name, const TypedProgramAST& program) const {
     const auto func = program.declared_functions.find(function_name);
     if (func != program.declared_functions.end()) {
       return std::make_optional<std::tuple<const std::string&, const std::map<std::string, TypeAST>&, TypeAST>>({
@@ -520,17 +537,33 @@ class Typer {
     if (mode == Mode::Verbose) {
       std::cerr << "typing function call: " << call.function_name << std::endl;
     }
-    const auto maybe_function = lookup_function(call.function_name, program);
-    if (!maybe_function.has_value()) {
+    const auto& [funcname, funcparams, funcreturntype] = ([&]() -> std::tuple<const std::string, const std::map<std::string, TypeAST>, TypeAST> {
+      auto maybe_function = lookup_function(call.function_name, program);
+      if (maybe_function.has_value()) {
+        return maybe_function.value();
+      }
+
+      auto result = scope->lookup(call.function_name);
+      if (result.has_value()) {
+        auto* func = std::get_if<FunctionType>(&result.value());
+        assert(func);
+        // std::cerr << "TODO: do something with the looked-up " << call.function_name << ": " << pretty_print_type(*func) << std::endl;
+        TypeAST t = *func->return_type;
+        auto params = func->parameters;
+        return std::make_tuple<const std::string, const std::map<std::string, TypeAST>, TypeAST>(std::string(call.function_name), std::move(params), std::move(t));
+      } else {
+        std::cerr << "Huh, it's really not in scope :/" << std::endl;
+      }
+
       std::cerr << "Error: function \"" << call.function_name << "\" not in scope" << std::endl;
       if (lookup_procedure(call.function_name, program)) {
         std::cerr << "  " << call.function_name << "(...) is a procedure" << std::endl;
       }
       assert(false);
-    }
-    const auto& [funcname, funcparams, funcreturntype] = maybe_function.value();
+    })();
     std::map<std::string, TypedExpressionAST> parameter_values;
     for (const auto& [name, need_type] : funcparams) {
+      // std::cerr << "DEBUG checking funcparam name: " << name << " and type " << pretty_print_type(need_type) << std::endl;
       const auto ast = call.arguments.find(name);
       if (ast == call.arguments.end()) {
         std::cerr << "Error: no function call argument provided for " << call.function_name << "(...) parameter: \"" << name << "\"" << std::endl;
@@ -539,7 +572,7 @@ class Typer {
       auto value = TypeExpression(ast->second, program, scope);
       auto got_type = value.type;
       if (got_type != need_type) {
-        std::cerr << "Error: type mismatch in functional call argument: got " << pretty_print_type(got_type) << " but need " << pretty_print_type(need_type) << " for " << call.function_name << "(...) parameter " << name << std::endl;
+        std::cerr << "Error: type mismatch in function call argument: got " << pretty_print_type(got_type) << " but need " << pretty_print_type(need_type) << " for " << call.function_name << "(...) parameter " << name << std::endl;
         assert(false);
       }
       parameter_values[name] = std::move(value);

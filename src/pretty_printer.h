@@ -10,10 +10,15 @@ namespace torpul {
 
 namespace {
 
+std::string pretty_print_parameter_list(const ParameterList& parameters);
+
 std::string pretty_print_type(const TypeAST& ast) {
+  if (ast.valueless_by_exception()) {
+    std::cerr << "Oh no! TypeAST is valueless by exception. That shouldn't happen!" << std::endl;
+  }
   return std::visit(overloaded{
                         [](const FunctionType& t) {
-                          return std::string("Function<... " + pretty_print_type(*t.return_type) + ">");
+                          return std::string("Function<(" + pretty_print_parameter_list(t.parameters) + "):" + pretty_print_type(*t.return_type) + ">");
                         },
                         [](const IoType& t) {
                           return std::string("IO<") + pretty_print_type(*t.base_type) + std::string(">");
@@ -102,7 +107,7 @@ std::string pretty_print_expression(const std::unique_ptr<ExpressionAST>& ast) {
                     *ast.get());
 }
 
-std::string pretty_print_parameter_list(const ParameterList parameters) {
+std::string pretty_print_parameter_list(const ParameterList& parameters) {
   std::stringstream ss;
   bool first_parameter = true;
   for (const auto& [name, type] : parameters) {

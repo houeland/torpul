@@ -48,8 +48,10 @@ struct IoType {
   std::shared_ptr<TypeAST> base_type;
 };
 
+using ParameterList = std::map<std::string, TypeAST>;
+
 struct FunctionType {
-  std::map<std::string, TypeAST> parameters;
+  ParameterList parameters;
   std::shared_ptr<TypeAST> return_type;
 };
 
@@ -126,8 +128,6 @@ struct FunctionDeclarationAST;
 
 using FunctionBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST, FunctionDeclarationAST>;
 using ProcedureBodyStatementAST = std::variant<ReturnStatementAST, DefineStatementAST, RunStatementAST>;
-
-using ParameterList = std::map<std::string, TypeAST>;
 
 struct FunctionDeclarationAST {
   std::string function_name;
